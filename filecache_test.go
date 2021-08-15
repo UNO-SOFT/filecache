@@ -6,6 +6,7 @@ package filecache_test
 
 import (
 	"context"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -25,7 +26,7 @@ func TestCache(t *testing.T) {
 	if os.Getenv("KEEP") != "1" {
 		defer os.RemoveAll(dn)
 	}
-	pc, err := filecache.New(dn, 10, 1<<10)
+	pc, err := filecache.New(dn, 10, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,13 +37,19 @@ func TestCache(t *testing.T) {
 	defer cancel()
 
 	putGet := func(k, v string) {
-		if err := pc.Put(ctx, k, strings.NewReader(v)); err != nil {
-			t.Errorf("Put %q: %+v", k, err)
-			return
+		var rc io.ReadCloser
+		for i := 0; i < 100; i++ {
+			if err := pc.Put(ctx, k, strings.NewReader(v)); err != nil {
+				t.Errorf("Put %q: %+v", k, err)
+				return
+			}
+			var err error
+			if rc, err = pc.Get(ctx, k); err == nil {
+				break
+			}
+			t.Logf("Get(%d). %q: %+v", i, k, err)
 		}
-		rc, err := pc.Get(ctx, k)
-		if err != nil {
-			t.Errorf("Get %q: %+v", k, err)
+		if rc == nil {
 			return
 		}
 		b, err := ioutil.ReadAll(rc)
@@ -68,7 +75,7 @@ func TestCache(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		_, _ = rand.Read(a[:])
 		b = append(b, a[:]...)
-		putGet(strconv.Itoa(i), string(b))
+		putGet("a"+strconv.Itoa(i), string(b))
 	}
 }
 
