@@ -29,6 +29,9 @@ const HashSize = sha256.Size
 // input file contents, executable contents).
 type ActionID [HashSize]byte
 
+// NewActionID returns the hashed bytes.
+func NewActionID(p []byte) ActionID { return sha256.Sum256(p) }
+
 // An OutputID is a cache output key, the hash of an output of a computation.
 type OutputID [HashSize]byte
 
