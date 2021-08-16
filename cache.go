@@ -1,3 +1,4 @@
+// Copyright 2021 Tamás Gulácsi.
 // Copyright 2017 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -39,6 +40,8 @@ type OutputID [HashSize]byte
 type Cache struct {
 	dir string
 	now func() time.Time
+
+	mtimeInterval time.Duration
 }
 
 // Open opens and returns the cache in the given directory.
@@ -68,10 +71,20 @@ func Open(dir string) (*Cache, error) {
 		}
 	}
 	c := &Cache{
-		dir: dir,
-		now: time.Now,
+		dir:           dir,
+		now:           time.Now,
+		mtimeInterval: DefaultMTimeInterval,
 	}
 	return c, nil
+}
+
+// SetMTimeInterval set the time precision for updating file access times.
+// The default is 1 hour.
+func (c *Cache) SetMTimeInterval(d time.Duration) {
+	if d <= 0 {
+		d = DefaultMTimeInterval
+	}
+	c.mtimeInterval = d
 }
 
 // fileName returns the name of the file corresponding to the given id.
@@ -227,9 +240,9 @@ func (c *Cache) OutputFile(out OutputID) string {
 // Go developers found that essentially all reuse of cached entries happened
 // within 5 days of the previous reuse. See golang.org/issue/22990.
 const (
-	mtimeInterval = 1 * time.Hour
-	trimInterval  = 24 * time.Hour
-	trimLimit     = 5 * 24 * time.Hour
+	DefaultMTimeInterval = 1 * time.Hour
+	DefaultTrimInterval  = 24 * time.Hour
+	DefaultTrimLimit     = 5 * 24 * time.Hour
 )
 
 // used makes a best-effort attempt to update mtime on file,
@@ -243,14 +256,28 @@ const (
 // while still keeping the mtimes useful for cache trimming.
 func (c *Cache) used(file string) {
 	info, err := os.Stat(file)
-	if err == nil && c.now().Sub(info.ModTime()) < mtimeInterval {
+	if err == nil && c.now().Sub(info.ModTime()) < c.mtimeInterval {
 		return
 	}
 	_ = os.Chtimes(file, c.now(), c.now())
 }
 
 // Trim removes old cache entries that are likely not to be reused.
+// It uses the default trim interval and limit.
 func (c *Cache) Trim() {
+	c.TrimWithLimit(0, 0)
+}
+
+// TrimLimited removes old cache entries that are likely not to be reused.
+//
+// For each duration, <=0 means Default.
+func (c *Cache) TrimWithLimit(trimInterval, trimLimit time.Duration) {
+	if trimInterval <= 0 {
+		trimInterval = DefaultTrimInterval
+	}
+	if trimLimit <= 0 {
+		trimLimit = DefaultTrimLimit
+	}
 	now := c.now()
 
 	// We maintain in dir/trim.txt the time of the last completed cache trim.
@@ -263,7 +290,7 @@ func (c *Cache) Trim() {
 	if data, err := os.ReadFile(filepath.Join(c.dir, "trim.txt")); err == nil {
 		if t, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
 			lastTrim := time.Unix(t, 0)
-			if d := now.Sub(lastTrim); d < trimInterval && d > -mtimeInterval {
+			if d := now.Sub(lastTrim); d < trimInterval && d > -c.mtimeInterval {
 				return
 			}
 		}
@@ -272,7 +299,7 @@ func (c *Cache) Trim() {
 	// Trim each of the 256 subdirectories.
 	// We subtract an additional mtimeInterval
 	// to account for the imprecision of our "last used" mtimes.
-	cutoff := now.Add(-trimLimit - mtimeInterval)
+	cutoff := now.Add(-trimLimit - c.mtimeInterval)
 	for i := 0; i < 256; i++ {
 		subdir := filepath.Join(c.dir, fmt.Sprintf("%02x", i))
 		c.trimSubdir(subdir, cutoff)
