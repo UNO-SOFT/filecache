@@ -9,5 +9,6 @@ require (
 	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
 	github.com/google/renameio v1.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/rogpeppe/go-internal v1.8.0 // indirect
 	golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f // indirect
 )
