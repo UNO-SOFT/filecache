@@ -23,18 +23,16 @@ import (
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
-const HashSize = sha256.Size
-
 // An ActionID is a cache action key, the hash of a complete description of a
 // repeatable computation (command line, environment variables,
 // input file contents, executable contents).
-type ActionID [HashSize]byte
+type ActionID ID
 
 // NewActionID returns the hashed bytes.
 func NewActionID(p []byte) ActionID { return sha256.Sum256(p) }
 
 // An OutputID is a cache output key, the hash of an output of a computation.
-type OutputID [HashSize]byte
+type OutputID ID
 
 // A Cache is a package cache, backed by a file system directory tree.
 type Cache struct {
@@ -137,7 +135,7 @@ func (c *Cache) Get(id ActionID) (Entry, error) {
 	entry := make([]byte, entrySize+1) // +1 to detect whether f is too long
 	if n, err := io.ReadFull(f, entry); n > entrySize {
 		return missing(errors.New("too long"))
-	} else if err != io.ErrUnexpectedEOF {
+	} else if !errors.Is(err, io.ErrUnexpectedEOF) {
 		if errors.Is(err, io.EOF) {
 			return missing(errors.New("file is empty"))
 		}
@@ -389,7 +387,7 @@ func (c *Cache) putIndexEntry(id ActionID, out OutputID, size int64) error {
 // It may read file twice. The content of file must not change between the two passes.
 func (c *Cache) Put(id ActionID, file io.ReadSeeker) (OutputID, int64, error) {
 	// Compute output ID.
-	h := sha256.New()
+	h := NewHash()
 	if _, err := file.Seek(0, 0); err != nil {
 		return OutputID{}, 0, err
 	}
@@ -397,8 +395,7 @@ func (c *Cache) Put(id ActionID, file io.ReadSeeker) (OutputID, int64, error) {
 	if err != nil {
 		return OutputID{}, 0, err
 	}
-	var out OutputID
-	h.Sum(out[:0])
+	out := OutputID(h.SumID())
 
 	// Copy to cached output file (if not already present).
 	if err := c.copyFile(file, out, size); err != nil {
@@ -423,11 +420,10 @@ func (c *Cache) copyFile(file io.ReadSeeker, out OutputID, size int64) error {
 	if err == nil && info.Size() == size {
 		// Check hash.
 		if f, err := os.Open(name); err == nil {
-			h := sha256.New()
+			h := NewHash()
 			_, _ = io.Copy(h, f)
 			_ = f.Close()
-			var out2 OutputID
-			h.Sum(out2[:0])
+			out2 := OutputID(h.SumID())
 			if out == out2 {
 				return nil
 			}
@@ -461,7 +457,7 @@ func (c *Cache) copyFile(file io.ReadSeeker, out OutputID, size int64) error {
 		_ = f.Truncate(0)
 		return err
 	}
-	h := sha256.New()
+	h := NewHash()
 	w := io.MultiWriter(f, h)
 	if _, err := io.CopyN(w, file, size-1); err != nil {
 		_ = f.Truncate(0)
