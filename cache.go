@@ -4,6 +4,10 @@
 // license that can be found in the LICENSE file.
 
 // Package filecache implements an artifact cache.
+//
+// It is copied from Go's cmd/go/internal/cache,
+// cleared the Go-specific environment settings for default cache,
+// Go version-salted hash, and added TrimWithLimits.
 package filecache
 
 import (
