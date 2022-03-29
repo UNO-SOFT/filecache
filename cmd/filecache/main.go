@@ -1,5 +1,8 @@
 // Copyright 2022 Tamás Gulácsi.
 
+// Package main of filecache implements program memoization:
+// caches the output of the call with the arguments (and possibly the stdin)
+// as key.
 package main
 
 import (
@@ -48,6 +51,10 @@ func Main() error {
 				cache.TrimWithLimit(*flagTrimInterval, *flagTrimLimit)
 			}
 			var cmdBuf bytes.Buffer
+			// Number of arguments, \0
+			// arguments, separated by \0
+			// (optionally), the hash of the stdin's content.
+			fmt.Fprintf(&cmdBuf, "%d\x00", len(args))
 			for _, arg := range args {
 				_, _ = cmdBuf.WriteString(arg)
 				_ = cmdBuf.WriteByte(0)
@@ -72,15 +79,13 @@ func Main() error {
 				}
 				stdin = fh
 				_ = os.Remove(fh.Name())
-				_ = cmdBuf.WriteByte(0)
 				sumID := hsh.SumID()
 				_, _ = cmdBuf.Write(sumID[:])
-				_ = cmdBuf.WriteByte(0)
-				log.Printf("stdinHash=%x", hsh.SumID())
+				//log.Printf("stdinHash=%x", hsh.SumID())
 			}
 
 			actionID := filecache.NewActionID(cmdBuf.Bytes())
-			log.Printf("actionID=%x", actionID)
+			//log.Printf("actionID=%x", actionID)
 			fn, _, err := cache.GetFile(actionID)
 			if fn != "" && err == nil {
 				fh, err := os.Open(fn)
@@ -88,9 +93,11 @@ func Main() error {
 					log.Printf("open %q: %+v", fn, err)
 				} else {
 					_, err = io.Copy(os.Stdout, fh)
+					log.Printf("Serving from cached %q: %+v", fh.Name(), err)
 					return err
 				}
 			}
+			log.Printf("Executing %q.", args)
 
 			fh, err := os.CreateTemp("", "filecache-*.out")
 			if err != nil {
