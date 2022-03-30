@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/UNO-SOFT/filecache"
@@ -30,7 +31,10 @@ func main() {
 func Main() error {
 	fs := flag.NewFlagSet("filecache", flag.ContinueOnError)
 	flagCacheDir := fs.String("cache-dir", "", "cache directory")
-	*flagCacheDir, _ = os.UserCacheDir()
+	var err error
+	if *flagCacheDir, err = os.UserCacheDir(); err == nil {
+		*flagCacheDir = filepath.Join(*flagCacheDir, "filecache")
+	}
 	flagStdin := fs.Bool("stdin", false, "read and pass stdin")
 	flagTrim := fs.Bool("trim", false, "trim before run")
 	flagMTimeInterval := fs.Duration("mtime", filecache.DefaultMTimeInterval, "mtime resolution")
