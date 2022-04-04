@@ -97,11 +97,12 @@ func Main() error {
 					log.Printf("open %q: %+v", fn, err)
 				} else {
 					_, err = io.Copy(os.Stdout, fh)
-					log.Printf("Serving from cached %q: %+v", fh.Name(), err)
+					if err != nil {
+						log.Printf("Serving from cached %q: %+v", fh.Name(), err)
+					}
 					return err
 				}
 			}
-			log.Printf("Executing %q.", args)
 
 			fh, err := os.CreateTemp("", "filecache-*.out")
 			if err != nil {
@@ -118,7 +119,8 @@ func Main() error {
 			cmd.Stderr = os.Stderr
 			cmd.Stdout = io.MultiWriter(fh, os.Stdout)
 			if err = cmd.Run(); err != nil {
-				return err
+				log.Printf("Executing %q: %+v", args, err)
+				return fmt.Errorf("%q: %w", args, err)
 			}
 			_ = os.Remove(fh.Name())
 			if _, err = fh.Seek(0, 0); err != nil {
