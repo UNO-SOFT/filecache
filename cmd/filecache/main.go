@@ -11,7 +11,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -20,11 +19,15 @@ import (
 
 	"github.com/UNO-SOFT/filecache"
 	"github.com/peterbourgon/ff/v3/ffcli"
+	"github.com/tgulacsi/go/zlog"
 )
+
+var logger = zlog.New(zlog.MaybeConsoleWriter(os.Stderr))
 
 func main() {
 	if err := Main(); err != nil {
-		log.Fatalf("ERROR: %+v", err)
+		logger.Error(err, "Main")
+		os.Exit(1)
 	}
 }
 
@@ -85,20 +88,20 @@ func Main() error {
 				_ = os.Remove(fh.Name())
 				sumID := hsh.SumID()
 				_, _ = cmdBuf.Write(sumID[:])
-				//log.Printf("stdinHash=%x", hsh.SumID())
+				logger.V(1).Info("stdin", "hash", hsh.SumID())
 			}
 
 			actionID := filecache.NewActionID(cmdBuf.Bytes())
-			//log.Printf("actionID=%x", actionID)
+			logger.V(1).Info("action", "id", actionID)
 			fn, _, err := cache.GetFile(actionID)
 			if fn != "" && err == nil {
 				fh, err := os.Open(fn)
 				if err != nil {
-					log.Printf("open %q: %+v", fn, err)
+					logger.Error(err, "open", "file", fn)
 				} else {
 					_, err = io.Copy(os.Stdout, fh)
 					if err != nil {
-						log.Printf("Serving from cached %q: %+v", fh.Name(), err)
+						logger.Error(err, "serving from cached", "file", fh.Name())
 					}
 					return err
 				}
@@ -119,7 +122,7 @@ func Main() error {
 			cmd.Stderr = os.Stderr
 			cmd.Stdout = io.MultiWriter(fh, os.Stdout)
 			if err = cmd.Run(); err != nil {
-				log.Printf("Executing %q: %+v", args, err)
+				logger.Error(err, "executing", "args", args)
 				return fmt.Errorf("%q: %w", args, err)
 			}
 			_ = os.Remove(fh.Name())
