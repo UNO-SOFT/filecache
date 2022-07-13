@@ -5,7 +5,7 @@ go 1.17
 require (
 	github.com/peterbourgon/ff/v3 v3.1.2
 	github.com/rogpeppe/go-internal v1.8.1
-	github.com/tgulacsi/go v0.22.1
+	github.com/tgulacsi/go v0.22.2
 )
 
 require (

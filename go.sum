@@ -426,6 +426,8 @@ github.com/syndtr/goleveldb v0.0.0-20180608030153-db3ee9ee8931/go.mod h1:Z4AUp2K
 github.com/syndtr/goleveldb v1.0.0/go.mod h1:ZVVdQEZoIme9iO1Ch2Jdy24qqXrMMOU6lpPAyBWyWuQ=
 github.com/tgulacsi/go v0.22.1 h1:mI3s5iOzR6bVARQbA95GZZQXPFhZ9y6VzLQyjuG4sks=
 github.com/tgulacsi/go v0.22.1/go.mod h1:DJdLEyuRomUXkuD5K4hXkOmclD3ocfVjhYmjzDp5vCQ=
+github.com/tgulacsi/go v0.22.2 h1:xfCfe8v1BzLi8+vTwq5izPxt1wqcl54xzoA6KZ/fOEU=
+github.com/tgulacsi/go v0.22.2/go.mod h1:DJdLEyuRomUXkuD5K4hXkOmclD3ocfVjhYmjzDp5vCQ=
 github.com/tgulacsi/picago v0.0.0-20171229130838-9e1ac2306c70/go.mod h1:YOW4MCz1GRh0aqedyC48A1CRXSHngOB/O/4+1rUjDQg=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80/go.mod h1:iFyPdL66DjUD96XmzVL3ZntbzcflLnznH0fr99w5VqE=

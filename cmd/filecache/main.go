@@ -32,6 +32,7 @@ func main() {
 }
 
 func Main() error {
+	zlog.SetLevel(logger, zlog.InfoLevel)
 	fs := flag.NewFlagSet("filecache", flag.ContinueOnError)
 	flagCacheDir := fs.String("cache-dir", "", "cache directory")
 	var err error
@@ -43,6 +44,7 @@ func Main() error {
 	flagMTimeInterval := fs.Duration("mtime", filecache.DefaultMTimeInterval, "mtime resolution")
 	flagTrimInterval := fs.Duration("trim-interval", filecache.DefaultMTimeInterval, "trim interval")
 	flagTrimLimit := fs.Duration("trim-limit", filecache.DefaultTrimLimit, "trim limit")
+	flagVerbose := fs.Bool("v", false, "verbose logging")
 
 	app := ffcli.Command{Name: "cmd", FlagSet: fs,
 		ShortUsage: "command to execute",
@@ -133,7 +135,15 @@ func Main() error {
 			return err
 		},
 	}
+	if err := app.Parse(os.Args[1:]); err != nil {
+		return err
+	}
+	if *flagVerbose {
+		zlog.SetLevel(logger, zlog.TraceLevel)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	return app.ParseAndRun(ctx, os.Args[1:])
+
+	return app.Run(ctx)
 }
