@@ -8,17 +8,24 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/UNO-SOFT/filecache"
 	"github.com/peterbourgon/ff/v3/ffcli"
+	"github.com/tgulacsi/go/httpunix"
 	"github.com/tgulacsi/go/zlog"
 )
 
@@ -33,6 +40,103 @@ func main() {
 
 func Main() error {
 	zlog.SetLevel(logger, zlog.InfoLevel)
+
+	var cache *filecache.Cache
+
+	serveCmd := ffcli.Command{Name: "serve",
+		Exec: func(ctx context.Context, args []string) error {
+			if len(args) == 0 {
+				return errors.New("address to listen on is required")
+			}
+			addr := prepareAddr(args[0])
+
+			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				actionIDb64 := r.URL.Path
+				logger := logger.WithValues("actionID", actionIDb64)
+				b, err := base64.URLEncoding.DecodeString(actionIDb64)
+				if err != nil {
+					logger.Error(err, "decode")
+					http.Error(w, fmt.Sprintf("decode %q: %+v", actionIDb64, err), http.StatusBadRequest)
+					return
+				}
+				var actionID filecache.ActionID
+				if len(b) != cap(actionID) {
+					logger.Error(err, "hashsize", "len", len(b))
+					http.Error(w, fmt.Sprintf("size mismatch: got %q (%d) wanted %d", actionIDb64, len(b), cap(actionID)), http.StatusBadRequest)
+					return
+				}
+				copy(actionID[:], b)
+				switch r.Method {
+				default:
+					http.Error(w, fmt.Sprintf("%q: only GET and POST allowed", r.Method), http.StatusMethodNotAllowed)
+					return
+				case "GET":
+					fn, _, err := cache.GetFile(actionID)
+					if fn == "" {
+						logger.Info("not found")
+						http.Error(w, err.Error(), http.StatusNotFound)
+						return
+					} else if err != nil {
+						logger.Error(err, "GetFile")
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					fh, err := os.Open(fn)
+					if err != nil {
+						logger.Error(err, "open", "file", fn)
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					defer fh.Close()
+					length, seekEndErr := fh.Seek(0, io.SeekEnd)
+					if _, err = fh.Seek(0, 0); err != nil {
+						logger.Error(err, "rewind %q: %w", fh.Name(), err)
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					w.Header().Set("Content-Type", "application/octet-stream")
+					if seekEndErr == nil {
+						w.Header().Set("Content-Length", fmt.Sprintf("%d", length))
+					}
+					_, err = io.Copy(w, fh)
+					if err != nil {
+						logger.Error(err, "serving from cached", "file", fh.Name())
+					}
+					return
+
+				case "POST":
+					fh, err := os.CreateTemp("", actionIDb64+"-*")
+					if err != nil {
+						logger.Error(err, "create temp")
+						http.Error(w, fmt.Sprintf("create temp: %+v", err), http.StatusInternalServerError)
+						return
+					}
+					defer func() {
+						_ = fh.Close()
+						_ = os.Remove(fh.Name())
+					}()
+					_ = os.Remove(fh.Name())
+					if _, err = io.Copy(fh, r.Body); err != nil {
+						logger.Error(err, "write file")
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+
+					_, _ = fh.Seek(0, 0)
+					if _, _, err = cache.Put(actionID, fh); err != nil {
+						logger.Error(err, "Put")
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					}
+					w.WriteHeader(201)
+				}
+			})
+
+			logger.Info("listening", "on", addr)
+			return httpunix.ListenAndServe(ctx, addr, http.DefaultServeMux)
+		},
+	}
+
 	fs := flag.NewFlagSet("filecache", flag.ContinueOnError)
 	flagCacheDir := fs.String("cache-dir", "", "cache directory")
 	var err error
@@ -45,20 +149,12 @@ func Main() error {
 	flagTrimInterval := fs.Duration("trim-interval", filecache.DefaultMTimeInterval, "trim interval")
 	flagTrimLimit := fs.Duration("trim-limit", filecache.DefaultTrimLimit, "trim limit")
 	flagVerbose := fs.Bool("v", false, "verbose logging")
+	flagServer := fs.String("server", "", "server to connect to")
 
 	app := ffcli.Command{Name: "cmd", FlagSet: fs,
-		ShortUsage: "command to execute",
+		ShortUsage:  "command to execute",
+		Subcommands: []*ffcli.Command{&serveCmd},
 		Exec: func(ctx context.Context, args []string) error {
-			cache, err := filecache.Open(*flagCacheDir)
-			if err != nil {
-				return fmt.Errorf("open %q: %w", *flagCacheDir, err)
-			}
-			if *flagMTimeInterval > 0 {
-				cache.SetMTimeInterval(*flagMTimeInterval)
-			}
-			if *flagTrim {
-				cache.TrimWithLimit(*flagTrimInterval, *flagTrimLimit)
-			}
 			var cmdBuf bytes.Buffer
 			// Number of arguments, \0
 			// arguments, separated by \0
@@ -109,6 +205,36 @@ func Main() error {
 				}
 			}
 
+			var actionIDb64 string
+			// Try to get from the server
+			if *flagServer != "" {
+				*flagServer = prepareAddr(*flagServer)
+				actionIDb64 = base64.URLEncoding.EncodeToString(actionID[:])
+				if strings.HasPrefix(*flagServer, httpunix.Scheme+"://") {
+					(&httpunix.Transport{
+						DialTimeout:           1 * time.Second,
+						RequestTimeout:        5 * time.Second,
+						ResponseHeaderTimeout: 5 * time.Second,
+					}).RegisterLocation(*flagServer, strings.TrimPrefix(*flagServer, httpunix.Scheme+"://"))
+				}
+				req, err := http.NewRequestWithContext(ctx, "GET", path.Join(*flagServer, actionIDb64), nil)
+				if err != nil {
+					logger.Error(err, "create request to", "server", *flagServer)
+				} else if resp, err := http.DefaultClient.Do(req); err != nil {
+					logger.Error(err, "connect", req.URL.String())
+				} else if resp.StatusCode >= 300 {
+					logger.Error(errors.New(resp.Status), "connect", req.URL.String())
+					if resp.Body != nil {
+						resp.Body.Close()
+					}
+				} else {
+					logger.Info("got", req.URL.String())
+					_, err = io.Copy(os.Stdout, resp.Body)
+					_ = resp.Body.Close()
+					return err
+				}
+			}
+
 			fh, err := os.CreateTemp("", "filecache-*.out")
 			if err != nil {
 				return err
@@ -131,6 +257,28 @@ func Main() error {
 			if _, err = fh.Seek(0, 0); err != nil {
 				return fmt.Errorf("rewind %q: %w", fh.Name(), err)
 			}
+
+			// Try to put to the server
+			if *flagServer != "" {
+				if req, err := http.NewRequestWithContext(ctx, "POST", path.Join(*flagServer, actionIDb64), fh); err != nil {
+					logger.Error(err, "create POST request", "to", *flagServer)
+				} else if resp, err := http.DefaultClient.Do(req); err != nil {
+					logger.Error(err, "POST request", "url", req.URL.String())
+				} else {
+					if resp.StatusCode >= 300 {
+						logger.Error(errors.New(resp.Status), "POST request", "url", req.URL.String())
+					} else {
+						logger.Info("put cache", "actionID", actionID)
+					}
+					if resp.Body != nil {
+						resp.Body.Close()
+					}
+				}
+				if _, err = fh.Seek(0, 0); err != nil {
+					return fmt.Errorf("rewind %q: %w", fh.Name(), err)
+				}
+			}
+
 			_, _, err = cache.Put(actionID, fh)
 			return err
 		},
@@ -142,8 +290,25 @@ func Main() error {
 		zlog.SetLevel(logger, zlog.TraceLevel)
 	}
 
+	_ = os.MkdirAll(*flagCacheDir, 0750)
+	cache, err = filecache.Open(*flagCacheDir)
+	if err != nil {
+		return fmt.Errorf("open %q: %w", *flagCacheDir, err)
+	}
+	if *flagMTimeInterval > 0 {
+		cache.SetMTimeInterval(*flagMTimeInterval)
+	}
+	if *flagTrim {
+		cache.TrimWithLimit(*flagTrimInterval, *flagTrimLimit)
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	return app.Run(ctx)
+}
+func prepareAddr(addr string) string {
+	if strings.HasPrefix(addr, "/") {
+		return httpunix.Scheme + "://" + addr
+	}
+	return addr
 }
