@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -48,10 +47,11 @@ func Main() error {
 			if len(args) == 0 {
 				return errors.New("address to listen on is required")
 			}
-			addr := prepareAddr(args[0])
+			addr := strings.TrimPrefix(prepareAddr(args[0]), "http://")
+			logger.V(1).Info("address", "arg", args[0], "addr", addr)
 
 			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				actionIDb64 := r.URL.Path
+				actionIDb64 := strings.TrimPrefix(r.URL.Path, "/")
 				logger := logger.WithValues("actionID", actionIDb64)
 				b, err := base64.URLEncoding.DecodeString(actionIDb64)
 				if err != nil {
@@ -66,10 +66,12 @@ func Main() error {
 					return
 				}
 				copy(actionID[:], b)
+
 				switch r.Method {
 				default:
 					http.Error(w, fmt.Sprintf("%q: only GET and POST allowed", r.Method), http.StatusMethodNotAllowed)
 					return
+
 				case "GET":
 					fn, _, err := cache.GetFile(actionID)
 					if fn == "" {
@@ -123,6 +125,7 @@ func Main() error {
 					}
 
 					_, _ = fh.Seek(0, 0)
+					logger.Info("put", "file", fh.Name())
 					if _, _, err = cache.Put(actionID, fh); err != nil {
 						logger.Error(err, "Put")
 						http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -206,21 +209,25 @@ func Main() error {
 			}
 
 			var actionIDb64 string
+			client := http.DefaultClient
 			// Try to get from the server
 			if *flagServer != "" {
 				*flagServer = prepareAddr(*flagServer)
+				logger.V(1).Info("try", "server", *flagServer)
 				actionIDb64 = base64.URLEncoding.EncodeToString(actionID[:])
 				if strings.HasPrefix(*flagServer, httpunix.Scheme+"://") {
-					(&httpunix.Transport{
+					tr := &httpunix.Transport{
 						DialTimeout:           1 * time.Second,
 						RequestTimeout:        5 * time.Second,
 						ResponseHeaderTimeout: 5 * time.Second,
-					}).RegisterLocation(*flagServer, strings.TrimPrefix(*flagServer, httpunix.Scheme+"://"))
+					}
+					_ = tr.GetLocation(strings.TrimPrefix(*flagServer, httpunix.Scheme+"://"))
+					client = &http.Client{Transport: tr}
 				}
-				req, err := http.NewRequestWithContext(ctx, "GET", path.Join(*flagServer, actionIDb64), nil)
+				req, err := http.NewRequestWithContext(ctx, "GET", *flagServer+"/"+actionIDb64, nil)
 				if err != nil {
 					logger.Error(err, "create request to", "server", *flagServer)
-				} else if resp, err := http.DefaultClient.Do(req); err != nil {
+				} else if resp, err := client.Do(req); err != nil {
 					logger.Error(err, "connect", req.URL.String())
 				} else if resp.StatusCode >= 300 {
 					logger.Error(errors.New(resp.Status), "connect", req.URL.String())
@@ -260,22 +267,24 @@ func Main() error {
 
 			// Try to put to the server
 			if *flagServer != "" {
-				if req, err := http.NewRequestWithContext(ctx, "POST", path.Join(*flagServer, actionIDb64), fh); err != nil {
+				logger.V(1).Info("POST", "server", *flagServer)
+				if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
 					logger.Error(err, "create POST request", "to", *flagServer)
-				} else if resp, err := http.DefaultClient.Do(req); err != nil {
+				} else if resp, err := client.Do(req); err != nil {
 					logger.Error(err, "POST request", "url", req.URL.String())
 				} else {
+					if resp.Body != nil {
+						defer resp.Body.Close()
+					}
+					logger.Info("put cache", "status", resp.Status, "actionID", actionID)
 					if resp.StatusCode >= 300 {
 						logger.Error(errors.New(resp.Status), "POST request", "url", req.URL.String())
 					} else {
-						logger.Info("put cache", "actionID", actionID)
-					}
-					if resp.Body != nil {
-						resp.Body.Close()
+						return nil
 					}
 				}
 				if _, err = fh.Seek(0, 0); err != nil {
-					return fmt.Errorf("rewind %q: %w", fh.Name(), err)
+					return fmt.Errorf("rewind after put %q: %w", fh.Name(), err)
 				}
 			}
 
@@ -309,6 +318,8 @@ func Main() error {
 func prepareAddr(addr string) string {
 	if strings.HasPrefix(addr, "/") {
 		return httpunix.Scheme + "://" + addr
+	} else if strings.HasPrefix(addr, ":") {
+		return "http://localhost" + addr
 	}
 	return addr
 }
