@@ -221,7 +221,7 @@ func Main() error {
 						RequestTimeout:        5 * time.Second,
 						ResponseHeaderTimeout: 5 * time.Second,
 					}
-					_ = tr.GetLocation(strings.TrimPrefix(*flagServer, httpunix.Scheme+"://"))
+					*flagServer = httpunix.Scheme + "://" + tr.GetLocation(strings.TrimPrefix(*flagServer, httpunix.Scheme+"://"))
 					client = &http.Client{Transport: tr}
 				}
 				req, err := http.NewRequestWithContext(ctx, "GET", *flagServer+"/"+actionIDb64, nil)
