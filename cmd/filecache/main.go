@@ -235,7 +235,7 @@ func Main() error {
 						resp.Body.Close()
 					}
 				} else {
-					logger.Info("got", req.URL.String())
+					logger.V(1).Info("server found", req.URL.String())
 					_, err = io.Copy(os.Stdout, resp.Body)
 					_ = resp.Body.Close()
 					return err
@@ -276,7 +276,7 @@ func Main() error {
 					if resp.Body != nil {
 						defer resp.Body.Close()
 					}
-					logger.Info("put cache", "status", resp.Status, "actionID", actionID)
+					logger.V(1).Info("put cache", "status", resp.Status, "actionID", actionID)
 					if resp.StatusCode >= 300 {
 						logger.Error(errors.New(resp.Status), "POST request", "url", req.URL.String())
 					} else {
