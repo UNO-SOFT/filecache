@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/renameio/v2"
 	"github.com/rogpeppe/go-internal/lockedfile"
 )
 
@@ -357,29 +358,7 @@ func (c *Cache) putIndexEntry(id ActionID, out OutputID, size int64) error {
 	file := c.fileName(id, "a")
 
 	// Copy file to cache directory.
-	mode := os.O_WRONLY | os.O_CREATE
-	f, err := os.OpenFile(file, mode, 0666)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(entry)
-	if err == nil {
-		// Truncate the file only *after* writing it.
-		// (This should be a no-op, but truncate just in case of previous corruption.)
-		//
-		// This differs from os.WriteFile, which truncates to 0 *before* writing
-		// via os.O_TRUNC. Truncating only after writing ensures that a second write
-		// of the same content to the same file is idempotent, and does not — even
-		// temporarily! — undo the effect of the first write.
-		err = f.Truncate(int64(len(entry)))
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		// TODO(bcmills): This Remove potentially races with another go command writing to file.
-		// Can we eliminate it?
-		os.Remove(file)
+	if err := renameio.WriteFile(file, []byte(entry), 0666); err != nil {
 		return err
 	}
 	_ = os.Chtimes(file, c.now(), c.now()) // mainly for tests
