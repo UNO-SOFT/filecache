@@ -69,7 +69,8 @@ func Open(dir string) (*Cache, error) {
 	}
 	for i := 0; i < 256; i++ {
 		name := filepath.Join(dir, fmt.Sprintf("%02x", i))
-		if err := os.MkdirAll(name, 0777); err != nil {
+		// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
+		if err := os.MkdirAll(name, 0770); err != nil {
 			return nil, err
 		}
 	}
@@ -419,7 +420,8 @@ func (c *Cache) copyFile(file io.ReadSeeker, out OutputID, size int64) error {
 	if err == nil && info.Size() > size { // shouldn't happen but fix in case
 		mode |= os.O_TRUNC
 	}
-	f, err := os.OpenFile(name, mode, 0666)
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
+	f, err := os.OpenFile(name, mode, 0660)
 	if err != nil {
 		return err
 	}

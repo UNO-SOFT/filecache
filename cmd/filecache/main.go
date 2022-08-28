@@ -250,6 +250,7 @@ func Main() error {
 				_ = fh.Close()
 				_ = os.Remove(fh.Name())
 			}()
+			// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			if stdin != nil {
 				cmd.Stdin = stdin
@@ -299,6 +300,7 @@ func Main() error {
 		zlog.SetLevel(logger, zlog.TraceLevel)
 	}
 
+	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
 	_ = os.MkdirAll(*flagCacheDir, 0750)
 	cache, err = filecache.Open(*flagCacheDir)
 	if err != nil {
