@@ -25,7 +25,7 @@ import (
 	"github.com/UNO-SOFT/filecache"
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"github.com/tgulacsi/go/httpunix"
-	"github.com/tgulacsi/go/zlog"
+	"github.com/UNO-SOFT/zlog"
 )
 
 var logger = zlog.New(zlog.MaybeConsoleWriter(os.Stderr))
