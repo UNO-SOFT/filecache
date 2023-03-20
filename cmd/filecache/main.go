@@ -1,4 +1,4 @@
-// Copyright 2022 Tamás Gulácsi.
+// Copyright 2022, 2023 Tamás Gulácsi.
 
 // Package main of filecache implements program memoization:
 // caches the output of the call with the arguments (and possibly the stdin)
@@ -23,12 +23,13 @@ import (
 	"time"
 
 	"github.com/UNO-SOFT/filecache"
+	"github.com/UNO-SOFT/zlog/v2"
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"github.com/tgulacsi/go/httpunix"
-	"github.com/UNO-SOFT/zlog"
 )
 
-var logger = zlog.New(zlog.MaybeConsoleWriter(os.Stderr))
+var verbose zlog.VerboseVar
+var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr))
 
 func main() {
 	if err := Main(); err != nil {
@@ -38,8 +39,6 @@ func main() {
 }
 
 func Main() error {
-	zlog.SetLevel(logger, zlog.InfoLevel)
-
 	var cache *filecache.Cache
 
 	serveCmd := ffcli.Command{Name: "serve",
@@ -151,7 +150,7 @@ func Main() error {
 	flagMTimeInterval := fs.Duration("mtime", filecache.DefaultMTimeInterval, "mtime resolution")
 	flagTrimInterval := fs.Duration("trim-interval", filecache.DefaultMTimeInterval, "trim interval")
 	flagTrimLimit := fs.Duration("trim-limit", filecache.DefaultTrimLimit, "trim limit")
-	flagVerbose := fs.Bool("v", false, "verbose logging")
+	fs.Var(&verbose, "v", "verbose logging")
 	flagServer := fs.String("server", "", "server to connect to")
 
 	app := ffcli.Command{Name: "cmd", FlagSet: fs,
@@ -295,9 +294,6 @@ func Main() error {
 	}
 	if err := app.Parse(os.Args[1:]); err != nil {
 		return err
-	}
-	if *flagVerbose {
-		zlog.SetLevel(logger, zlog.TraceLevel)
 	}
 
 	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
