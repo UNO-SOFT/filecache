@@ -47,7 +47,7 @@ func Main() error {
 				return errors.New("address to listen on is required")
 			}
 			addr := strings.TrimPrefix(prepareAddr(args[0]), "http://")
-			logger.V(1).Info("address", "arg", args[0], "addr", addr)
+			logger.Debug("address", "arg", args[0], "addr", addr)
 
 			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				actionIDb64 := strings.TrimPrefix(r.URL.Path, "/")
@@ -74,7 +74,7 @@ func Main() error {
 				case "GET":
 					fn, _, err := cache.GetFile(actionID)
 					if fn == "" {
-						logger.Info("not found")
+						logger.Debug("not found")
 						http.Error(w, err.Error(), http.StatusNotFound)
 						return
 					} else if err != nil {
@@ -124,7 +124,7 @@ func Main() error {
 					}
 
 					_, _ = fh.Seek(0, 0)
-					logger.Info("put", "file", fh.Name())
+					logger.Debug("put", "file", fh.Name())
 					if _, _, err = cache.Put(actionID, fh); err != nil {
 						logger.Error(err, "Put")
 						http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -134,7 +134,7 @@ func Main() error {
 				}
 			})
 
-			logger.Info("listening", "on", addr)
+			logger.Debug("listening", "on", addr)
 			return httpunix.ListenAndServe(ctx, addr, http.DefaultServeMux)
 		},
 	}
@@ -188,11 +188,11 @@ func Main() error {
 				_ = os.Remove(fh.Name())
 				sumID := hsh.SumID()
 				_, _ = cmdBuf.Write(sumID[:])
-				logger.V(1).Info("stdin", "hash", hsh.SumID())
+				logger.Debug("stdin", "hash", hsh.SumID())
 			}
 
 			actionID := filecache.NewActionID(cmdBuf.Bytes())
-			logger.V(1).Info("action", "id", actionID)
+			logger.Debug("action", "id", actionID)
 			fn, _, err := cache.GetFile(actionID)
 			if fn != "" && err == nil {
 				fh, err := os.Open(fn)
@@ -212,7 +212,7 @@ func Main() error {
 			// Try to get from the server
 			if *flagServer != "" {
 				*flagServer = prepareAddr(*flagServer)
-				logger.V(1).Info("try", "server", *flagServer)
+				logger.Debug("try", "server", *flagServer)
 				actionIDb64 = base64.URLEncoding.EncodeToString(actionID[:])
 				if strings.HasPrefix(*flagServer, httpunix.Scheme+"://") {
 					tr := &httpunix.Transport{
@@ -234,7 +234,7 @@ func Main() error {
 						resp.Body.Close()
 					}
 				} else {
-					logger.V(1).Info("server found", req.URL.String())
+					logger.Debug("server found", req.URL.String())
 					_, err = io.Copy(os.Stdout, resp.Body)
 					_ = resp.Body.Close()
 					return err
@@ -267,7 +267,7 @@ func Main() error {
 
 			// Try to put to the server
 			if *flagServer != "" {
-				logger.V(1).Info("POST", "server", *flagServer)
+				logger.Debug("POST", "server", *flagServer)
 				if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
 					logger.Error(err, "create POST request", "to", *flagServer)
 				} else if resp, err := client.Do(req); err != nil {
@@ -276,7 +276,7 @@ func Main() error {
 					if resp.Body != nil {
 						defer resp.Body.Close()
 					}
-					logger.V(1).Info("put cache", "status", resp.Status, "actionID", actionID)
+					logger.Debug("put cache", "status", resp.Status, "actionID", actionID)
 					if resp.StatusCode >= 300 {
 						logger.Error(errors.New(resp.Status), "POST request", "url", req.URL.String())
 					} else {
