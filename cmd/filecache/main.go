@@ -47,12 +47,13 @@ func Main() error {
 				return errors.New("address to listen on is required")
 			}
 			addr := strings.TrimPrefix(prepareAddr(args[0]), "http://")
-			logger.Debug("address", "arg", args[0], "addr", addr)
+			logger.Info("address", "arg", args[0], "addr", addr)
 
 			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				actionIDb64 := strings.TrimPrefix(r.URL.Path, "/")
 				logger := logger.WithValues("actionID", actionIDb64)
 				b, err := base64.URLEncoding.DecodeString(actionIDb64)
+				logger.Debug("handle", "method", r.Method, "path", r.URL.Path, "decoded", len(b), "error", err)
 				if err != nil {
 					logger.Error(err, "decode")
 					http.Error(w, fmt.Sprintf("decode %q: %+v", actionIDb64, err), http.StatusBadRequest)
@@ -73,6 +74,7 @@ func Main() error {
 
 				case "GET":
 					fn, _, err := cache.GetFile(actionID)
+					logger.Debug("server GET", "action", actionID, "fn", fn, "error", err)
 					if fn == "" {
 						logger.Debug("not found")
 						http.Error(w, err.Error(), http.StatusNotFound)
@@ -192,8 +194,8 @@ func Main() error {
 			}
 
 			actionID := filecache.NewActionID(cmdBuf.Bytes())
-			logger.Debug("action", "id", actionID)
 			fn, _, err := cache.GetFile(actionID)
+			logger.Debug("action", "id", actionID, "fn", fn, "error", err)
 			if fn != "" && err == nil {
 				fh, err := os.Open(fn)
 				if err != nil {
@@ -210,6 +212,7 @@ func Main() error {
 			var actionIDb64 string
 			client := http.DefaultClient
 			// Try to get from the server
+			logger.Debug("get from server?", "server", *flagServer)
 			if *flagServer != "" {
 				oldAddr := *flagServer
 				*flagServer = prepareAddr(*flagServer)
@@ -235,7 +238,7 @@ func Main() error {
 						resp.Body.Close()
 					}
 				} else {
-					logger.Debug("server found", req.URL.String())
+					logger.Debug("server found", "url", req.URL.String())
 					_, err = io.Copy(os.Stdout, resp.Body)
 					_ = resp.Body.Close()
 					return err
@@ -296,6 +299,7 @@ func Main() error {
 	if err := app.Parse(os.Args[1:]); err != nil {
 		return err
 	}
+	logger.Info("parsed", "args", os.Args[1:])
 
 	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
 	_ = os.MkdirAll(*flagCacheDir, 0750)
