@@ -211,8 +211,9 @@ func Main() error {
 			client := http.DefaultClient
 			// Try to get from the server
 			if *flagServer != "" {
+				oldAddr := *flagServer
 				*flagServer = prepareAddr(*flagServer)
-				logger.Debug("try", "server", *flagServer)
+				logger.Debug("try", "server", *flagServer, "original", oldAddr)
 				actionIDb64 = base64.URLEncoding.EncodeToString(actionID[:])
 				if strings.HasPrefix(*flagServer, httpunix.Scheme+"://") {
 					tr := &httpunix.Transport{
@@ -227,7 +228,7 @@ func Main() error {
 				if err != nil {
 					logger.Error(err, "create request to", "server", *flagServer)
 				} else if resp, err := client.Do(req); err != nil {
-					logger.Error(err, "connect", req.URL.String())
+					logger.Error(err, "connect", req.URL.String(), "transport", client.Transport, "server", *flagServer, "original", oldAddr)
 				} else if resp.StatusCode >= 300 {
 					logger.Error(errors.New(resp.Status), "connect", req.URL.String())
 					if resp.Body != nil {
@@ -271,7 +272,7 @@ func Main() error {
 				if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
 					logger.Error(err, "create POST request", "to", *flagServer)
 				} else if resp, err := client.Do(req); err != nil {
-					logger.Error(err, "POST request", "url", req.URL.String())
+					logger.Error(err, "POST request", "url", req.URL.String(), "server", *flagServer)
 				} else {
 					if resp.Body != nil {
 						defer resp.Body.Close()
