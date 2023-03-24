@@ -291,7 +291,7 @@ func (c *Cache) TrimWithLimit(trimInterval, trimLimit time.Duration) {
 	// trim time is too far in the future, attempt the trim anyway. It's possible that
 	// the cache was full when the corruption happened. Attempting a trim on
 	// an empty cache is cheap, so there wouldn't be a big performance hit in that case.
-	if data, err := os.ReadFile(filepath.Join(c.dir, "trim.txt")); err == nil {
+	if data, err := lockedfile.Read(filepath.Join(c.dir, "trim.txt")); err == nil {
 		if t, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
 			lastTrim := time.Unix(t, 0)
 			if d := now.Sub(lastTrim); d < trimInterval && d > -c.mtimeInterval {
