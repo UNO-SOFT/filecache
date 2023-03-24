@@ -188,7 +188,7 @@ func (c *Cache) Get(id ActionID) (Entry, error) {
 
 	c.used(c.fileName(id, "a"))
 
-	return Entry{buf, size, time.Unix(0, tm)}, nil
+	return Entry{OutputID: buf, Size: size, Time: time.Unix(0, tm)}, nil
 }
 
 // GetFile looks up the action ID in the cache and returns
