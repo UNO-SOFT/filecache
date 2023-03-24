@@ -41,8 +41,9 @@ type OutputID ID
 
 // A Cache is a package cache, backed by a file system directory tree.
 type Cache struct {
-	dir string
 	now func() time.Time
+
+	dir string
 
 	mtimeInterval time.Duration
 }
@@ -58,7 +59,6 @@ type Cache struct {
 // to share a cache directory (for example, if the directory were stored
 // in a network file system). File locking is notoriously unreliable in
 // network file systems and may not suffice to protect the cache.
-//
 func Open(dir string) (*Cache, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -120,9 +120,9 @@ const (
 )
 
 type Entry struct {
-	OutputID OutputID
-	Size     int64
 	Time     time.Time
+	Size     int64
+	OutputID OutputID
 }
 
 // Get looks up the action ID in the cache,
