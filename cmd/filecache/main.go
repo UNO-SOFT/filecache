@@ -231,7 +231,7 @@ func Main() error {
 				if err != nil {
 					logger.Error(err, "create request to", "server", *flagServer)
 				} else if resp, err := client.Do(req); err != nil {
-					logger.Error(err, "connect", req.URL.String(), "transport", client.Transport, "server", *flagServer, "original", oldAddr)
+					logger.Warn("connect", "to", req.URL.String(), "transport", client.Transport, "server", *flagServer, "original", oldAddr, "error", err)
 				} else if resp.StatusCode >= 300 {
 					logger.Error(errors.New(resp.Status), "connect", req.URL.String())
 					if resp.Body != nil {
