@@ -279,7 +279,7 @@ func Main() error {
 
 			// Try to put to the server
 			if *flagServer != "" {
-				logger.Info("POST", "server", *flagServer, "actionID", actionIDb64)
+				logger.Debug("POST", "server", *flagServer, "actionID", actionIDb64)
 				if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
 					logger.Error("create POST request", "to", *flagServer, "error", err)
 				} else if resp, err := client.Do(req); err != nil {
@@ -288,7 +288,7 @@ func Main() error {
 					if resp.Body != nil {
 						defer resp.Body.Close()
 					}
-					logger.Info("put cache", "status", resp.Status, "actionID", actionIDb64)
+					logger.Debug("put cache", "status", resp.Status, "actionID", actionIDb64)
 					if resp.StatusCode >= 300 {
 						logger.Error("POST request", "url", req.URL.String(), "error", resp.Status)
 					} else {
