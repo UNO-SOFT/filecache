@@ -29,7 +29,7 @@ import (
 	"github.com/tgulacsi/go/httpunix"
 )
 
-var verbose = zlog.VerboseVar(1)
+var verbose zlog.VerboseVar
 var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr)).SLog()
 
 func main() {
@@ -44,6 +44,16 @@ func Main() error {
 
 	serveCmd := ffcli.Command{Name: "serve",
 		Exec: func(ctx context.Context, args []string) error {
+			var verboseLevelSet bool
+			for _, a := range os.Args[1:] {
+				if a == "-v" || strings.HasPrefix(a, "-v=") {
+					verboseLevelSet = true
+					break
+				}
+			}
+			if !verboseLevelSet {
+				verbose++
+			}
 			if len(args) == 0 {
 				return errors.New("address to listen on is required")
 			}
