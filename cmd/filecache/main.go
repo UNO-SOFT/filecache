@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,12 +29,12 @@ import (
 	"github.com/tgulacsi/go/httpunix"
 )
 
-var verbose zlog.VerboseVar
-var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr))
+var verbose = zlog.VerboseVar(1)
+var logger = zlog.NewLogger(zlog.MaybeConsoleHandler(&verbose, os.Stderr)).SLog()
 
 func main() {
 	if err := Main(); err != nil {
-		logger.Error(err, "Main")
+		logger.Error("Main", "error", err)
 		os.Exit(1)
 	}
 }
@@ -51,17 +52,17 @@ func Main() error {
 
 			http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				actionIDb64 := strings.TrimPrefix(r.URL.Path, "/")
-				logger := logger.WithValues("actionID", actionIDb64)
+				logger := logger.With("actionID", actionIDb64)
 				b, err := base64.URLEncoding.DecodeString(actionIDb64)
 				logger.Debug("handle", "method", r.Method, "path", r.URL.Path, "decoded", len(b), "error", err)
 				if err != nil {
-					logger.Error(err, "decode")
+					logger.Error("decode", "error", err)
 					http.Error(w, fmt.Sprintf("decode %q: %+v", actionIDb64, err), http.StatusBadRequest)
 					return
 				}
 				var actionID filecache.ActionID
 				if len(b) != cap(actionID) {
-					logger.Error(err, "hashsize", "len", len(b))
+					logger.Error("hashsize", "len", len(b), "error", err)
 					http.Error(w, fmt.Sprintf("size mismatch: got %q (%d) wanted %d", actionIDb64, len(b), cap(actionID)), http.StatusBadRequest)
 					return
 				}
@@ -74,26 +75,26 @@ func Main() error {
 
 				case "GET":
 					fn, _, err := cache.GetFile(actionID)
-					logger.Debug("server GET", "action", actionID, "fn", fn, "error", err)
+					logger.Debug("server GET", "fn", fn, "error", err)
 					if fn == "" {
-						logger.Debug("not found")
+						logger.Info("not found")
 						http.Error(w, err.Error(), http.StatusNotFound)
 						return
 					} else if err != nil {
-						logger.Error(err, "GetFile")
+						logger.Error("GetFile", "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 					fh, err := os.Open(fn)
 					if err != nil {
-						logger.Error(err, "open", "file", fn)
+						logger.Error("open", "file", fn, "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 					defer fh.Close()
 					length, seekEndErr := fh.Seek(0, io.SeekEnd)
 					if _, err = fh.Seek(0, 0); err != nil {
-						logger.Error(err, "rewind %q: %w", fh.Name(), err)
+						logger.Error("rewind", fh.Name(), "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
@@ -103,14 +104,14 @@ func Main() error {
 					}
 					_, err = io.Copy(w, fh)
 					if err != nil {
-						logger.Error(err, "serving from cached", "file", fh.Name())
+						logger.Error("serving from cached", "file", fh.Name(), "error", err)
 					}
 					return
 
 				case "POST":
 					fh, err := os.CreateTemp("", actionIDb64+"-*")
 					if err != nil {
-						logger.Error(err, "create temp")
+						logger.Error("create temp", "error", err)
 						http.Error(w, fmt.Sprintf("create temp: %+v", err), http.StatusInternalServerError)
 						return
 					}
@@ -119,16 +120,17 @@ func Main() error {
 						_ = os.Remove(fh.Name())
 					}()
 					_ = os.Remove(fh.Name())
+					logger.Info("store", "actionID", actionIDb64)
 					if _, err = io.Copy(fh, r.Body); err != nil {
-						logger.Error(err, "write file")
+						logger.Error("write file", "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
 
 					_, _ = fh.Seek(0, 0)
-					logger.Debug("put", "file", fh.Name())
+					logger.Info("put", "file", fh.Name())
 					if _, _, err = cache.Put(actionID, fh); err != nil {
-						logger.Error(err, "Put")
+						logger.Error("Put", "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 						return
 					}
@@ -199,11 +201,11 @@ func Main() error {
 			if fn != "" && err == nil {
 				fh, err := os.Open(fn)
 				if err != nil {
-					logger.Error(err, "open", "file", fn)
+					logger.Error("open", "file", fn, "error", err)
 				} else {
 					_, err = io.Copy(os.Stdout, fh)
 					if err != nil {
-						logger.Error(err, "serving from cached", "file", fh.Name())
+						logger.Error("serving from cached", "file", fh.Name(), "error", err)
 					}
 					return err
 				}
@@ -224,16 +226,22 @@ func Main() error {
 						RequestTimeout:        5 * time.Second,
 						ResponseHeaderTimeout: 5 * time.Second,
 					}
+					old := *flagServer
 					*flagServer = httpunix.Scheme + "://" + tr.GetLocation(strings.TrimPrefix(*flagServer, httpunix.Scheme+"://"))
+					logger.Debug("httpunix", "old", old, "new", *flagServer)
 					client = &http.Client{Transport: tr}
 				}
 				req, err := http.NewRequestWithContext(ctx, "GET", *flagServer+"/"+actionIDb64, nil)
 				if err != nil {
-					logger.Error(err, "create request to", "server", *flagServer)
+					logger.Error("create request to", "server", *flagServer, "error", err)
 				} else if resp, err := client.Do(req); err != nil {
 					logger.Warn("connect", "to", req.URL.String(), "transport", client.Transport, "server", *flagServer, "original", oldAddr, "error", err)
 				} else if resp.StatusCode >= 300 {
-					logger.Error(errors.New(resp.Status), "connect", req.URL.String())
+					lvl := slog.LevelError
+					if resp.StatusCode == http.StatusNotFound {
+						lvl = slog.LevelInfo
+					}
+					logger.Log(ctx, lvl, resp.Status, "connectTo", req.URL.String())
 					if resp.Body != nil {
 						resp.Body.Close()
 					}
@@ -261,7 +269,7 @@ func Main() error {
 			cmd.Stderr = os.Stderr
 			cmd.Stdout = io.MultiWriter(fh, os.Stdout)
 			if err = cmd.Run(); err != nil {
-				logger.Error(err, "executing", "args", args)
+				logger.Error("executing", "args", args, "error", err)
 				return fmt.Errorf("%q: %w", args, err)
 			}
 			_ = os.Remove(fh.Name())
@@ -271,18 +279,18 @@ func Main() error {
 
 			// Try to put to the server
 			if *flagServer != "" {
-				logger.Debug("POST", "server", *flagServer)
+				logger.Info("POST", "server", *flagServer, "actionID", actionIDb64)
 				if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
-					logger.Error(err, "create POST request", "to", *flagServer)
+					logger.Error("create POST request", "to", *flagServer, "error", err)
 				} else if resp, err := client.Do(req); err != nil {
-					logger.Error(err, "POST request", "url", req.URL.String(), "server", *flagServer)
+					logger.Error("POST request", "url", req.URL.String(), "server", *flagServer, "error", err)
 				} else {
 					if resp.Body != nil {
 						defer resp.Body.Close()
 					}
-					logger.Debug("put cache", "status", resp.Status, "actionID", actionID)
+					logger.Info("put cache", "status", resp.Status, "actionID", actionIDb64)
 					if resp.StatusCode >= 300 {
-						logger.Error(errors.New(resp.Status), "POST request", "url", req.URL.String())
+						logger.Error("POST request", "url", req.URL.String(), "error", resp.Status)
 					} else {
 						return nil
 					}
@@ -299,7 +307,7 @@ func Main() error {
 	if err := app.Parse(os.Args[1:]); err != nil {
 		return err
 	}
-	logger.Info("parsed", "args", os.Args[1:])
+	logger.Debug("parsed", "args", os.Args[1:])
 
 	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
 	_ = os.MkdirAll(*flagCacheDir, 0750)
