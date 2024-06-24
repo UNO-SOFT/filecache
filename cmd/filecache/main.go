@@ -1,4 +1,4 @@
-// Copyright 2022, 2023 Tamás Gulácsi.
+// Copyright 2022, 2024 Tamás Gulácsi.
 
 // Package main of filecache implements program memoization:
 // caches the output of the call with the arguments (and possibly the stdin)
@@ -25,6 +25,7 @@ import (
 
 	"github.com/UNO-SOFT/filecache"
 	"github.com/UNO-SOFT/zlog/v2"
+	"github.com/google/renameio/v2"
 	"github.com/peterbourgon/ff/v3/ffcli"
 	"github.com/tgulacsi/go/httpunix"
 )
@@ -166,6 +167,7 @@ func Main() error {
 	flagTrimLimit := fs.Duration("trim-limit", filecache.DefaultTrimLimit, "trim limit")
 	fs.Var(&verbose, "v", "verbose logging")
 	flagServer := fs.String("server", "", "server to connect to")
+	flagStdout := fs.String("o", "", "output to this file")
 
 	app := ffcli.Command{Name: "cmd", FlagSet: fs,
 		ShortUsage:  "command to execute",
@@ -205,6 +207,14 @@ func Main() error {
 				logger.Debug("stdin", "hash", hsh.SumID())
 			}
 
+			var outFh *renameio.PendingFile
+			if *flagStdout != "" && *flagStdout != "-" {
+				if outFh, err = renameio.NewPendingFile(*flagStdout, renameio.WithPermissions(0644)); err != nil {
+					return err
+				}
+				defer outFh.Cleanup()
+			}
+
 			actionID := filecache.NewActionID(cmdBuf.Bytes())
 			fn, _, err := cache.GetFile(actionID)
 			logger.Debug("action", "id", actionID, "fn", fn, "error", err)
@@ -213,7 +223,11 @@ func Main() error {
 				if err != nil {
 					logger.Error("open", "file", fn, "error", err)
 				} else {
-					_, err = io.Copy(os.Stdout, fh)
+					if outFh == nil {
+						_, err = io.Copy(os.Stdout, fh)
+					} else if _, err = io.Copy(outFh, fh); err == nil {
+						err = outFh.CloseAtomicallyReplace()
+					}
 					if err != nil {
 						logger.Error("serving from cached", "file", fh.Name(), "error", err)
 					}
@@ -257,7 +271,11 @@ func Main() error {
 					}
 				} else {
 					logger.Debug("server found", "url", req.URL.String())
-					_, err = io.Copy(os.Stdout, resp.Body)
+					if outFh == nil {
+						_, err = io.Copy(os.Stdout, resp.Body)
+					} else if _, err = io.Copy(outFh, resp.Body); err == nil {
+						err = outFh.CloseAtomicallyReplace()
+					}
 					_ = resp.Body.Close()
 					return err
 				}
@@ -271,18 +289,28 @@ func Main() error {
 				_ = fh.Close()
 				_ = os.Remove(fh.Name())
 			}()
+
 			// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			if stdin != nil {
 				cmd.Stdin = stdin
 			}
 			cmd.Stderr = os.Stderr
-			cmd.Stdout = io.MultiWriter(fh, os.Stdout)
+			if outFh == nil {
+				cmd.Stdout = fh
+			} else {
+				cmd.Stdout = io.MultiWriter(fh, outFh)
+			}
 			if err = cmd.Run(); err != nil {
 				logger.Error("executing", "args", args, "error", err)
 				return fmt.Errorf("%q: %w", args, err)
 			}
 			_ = os.Remove(fh.Name())
+			if outFh != nil {
+				if err = outFh.CloseAtomicallyReplace(); err != nil {
+					return err
+				}
+			}
 			if _, err = fh.Seek(0, 0); err != nil {
 				return fmt.Errorf("rewind %q: %w", fh.Name(), err)
 			}
