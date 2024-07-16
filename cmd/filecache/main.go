@@ -162,9 +162,9 @@ func Main() error {
 	}
 	flagStdin := fs.Bool("stdin", false, "read and pass stdin")
 	flagTrim := fs.Bool("trim", false, "trim before run")
-	flagMTimeInterval := fs.Duration("mtime", filecache.DefaultMTimeInterval, "mtime resolution")
-	flagTrimInterval := fs.Duration("trim-interval", filecache.DefaultMTimeInterval, "trim interval")
-	flagTrimLimit := fs.Duration("trim-limit", filecache.DefaultTrimLimit, "trim limit")
+	flagTrimInterval := fs.Duration("trim-interval", 1*time.Hour, "trim interval")
+	flagTrimLimit := fs.Duration("trim-limit", 5*24*time.Hour, "trim limit")
+	flagTrimSize := fs.Int64("trim-size", 1<<30, "trim file size limit")
 	fs.Var(&verbose, "v", "verbose logging")
 	flagServer := fs.String("server", "", "server to connect to")
 	flagStdout := fs.String("o", "", "output to this file")
@@ -353,11 +353,14 @@ func Main() error {
 	if err != nil {
 		return fmt.Errorf("open %q: %w", *flagCacheDir, err)
 	}
-	if *flagMTimeInterval > 0 {
-		cache.SetMTimeInterval(*flagMTimeInterval)
+	if *flagTrimInterval > 0 {
+		cache.SetTrimInterval(*flagTrimInterval)
 	}
 	if *flagTrim {
-		cache.TrimWithLimit(*flagTrimInterval, *flagTrimLimit)
+		cache.SetTrimLimit(*flagTrimLimit)
+	}
+	if *flagTrimSize > 0 {
+		cache.SetTrimSize(*flagTrimSize)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
