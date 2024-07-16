@@ -12,6 +12,9 @@ import (
 const HashSize = sha256.Size
 
 type ID [HashSize]byte
+
+func SumID(p []byte) ID { return sha256.Sum256(p) }
+
 type Hash struct {
 	hash.Hash
 }

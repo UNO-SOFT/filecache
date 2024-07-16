@@ -1,4 +1,4 @@
-// Copyright 2021, 2022 Tamás Gulácsi.
+// Copyright 2021, 2022 Tamás Gulácsi. All rights reserved.
 // Copyright 2017 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -7,9 +7,9 @@ package filecache
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,12 +29,13 @@ type ActionID = cache.ActionID
 // An OutputID is a cache output key, the hash of an output of a computation.
 type OutputID = cache.OutputID
 
-func NewActionID(p []byte) ActionID { return sha256.Sum256(p) }
+func NewActionID(p []byte) ActionID { return ActionID(SumID(p)) }
 
 // A Cache is a package cache, backed by a file system directory tree.
 type Cache struct {
 	lastTrim time.Time
 	c        *cache.Cache
+	now      func() time.Time
 
 	dir                     string
 	trimSize                int64
@@ -59,7 +60,7 @@ func Open(dir string) (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Cache{c: c, dir: dir, trimInterval: 5 * time.Minute, trimLimit: 24 * time.Hour}, nil
+	return &Cache{c: c, now: time.Now, dir: dir, trimInterval: 5 * time.Minute, trimLimit: 24 * time.Hour}, nil
 }
 
 // Put stores the given output in the cache as the output for the action ID.
@@ -67,6 +68,7 @@ func Open(dir string) (*Cache, error) {
 func (C *Cache) Put(id ActionID, file io.ReadSeeker) (OutputID, int64, error) {
 	C.mu.Lock()
 	defer C.mu.Unlock()
+	C.trim()
 	return C.c.Put(id, file)
 }
 
@@ -77,7 +79,6 @@ func (C *Cache) Put(id ActionID, file io.ReadSeeker) (OutputID, int64, error) {
 func (C *Cache) Get(id ActionID) (cache.Entry, error) {
 	C.mu.Lock()
 	defer C.mu.Unlock()
-	C.Trim()
 	return C.c.Get(id)
 }
 
@@ -123,7 +124,11 @@ func (C *Cache) SetTrimSize(n int64) {
 func (C *Cache) Trim() error {
 	C.mu.Lock()
 	defer C.mu.Unlock()
-	now := time.Now()
+	return C.trim()
+}
+
+func (C *Cache) trim() error {
+	now := C.now()
 	if !C.lastTrim.IsZero() && now.Sub(C.lastTrim) < C.trimInterval {
 		return nil
 	}
@@ -135,11 +140,12 @@ func (C *Cache) Trim() error {
 	// trim time is too far in the future, attempt the trim anyway. It's possible that
 	// the cache was full when the corruption happened. Attempting a trim on
 	// an empty cache is cheap, so there wouldn't be a big performance hit in that case.
+	log.Println("trimInterval:", C.trimInterval)
 	if C.trimInterval > 0 {
 		if data, err := lockedfile.Read(filepath.Join(C.dir, "trim.txt")); err == nil {
 			if t, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
-				lastTrim := time.Unix(t, 0)
-				if d := now.Sub(lastTrim); d < C.trimInterval {
+				C.lastTrim = time.Unix(t, 0)
+				if d := now.Sub(C.lastTrim); d < C.trimInterval {
 					return nil
 				}
 			}
@@ -156,6 +162,7 @@ func (C *Cache) Trim() error {
 		subdir := filepath.Join(C.dir, fmt.Sprintf("%02x", i))
 		C.trimSubdir(subdir, cutoffTime, cutoffSize, sizeCutoffTime)
 	}
+	C.lastTrim = now
 
 	// Ignore errors from here: if we don't write the complete timestamp, the
 	// cache will appear older than it is, and we'll trim it again next time.
