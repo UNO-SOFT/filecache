@@ -9,7 +9,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -31,6 +31,12 @@ type OutputID = cache.OutputID
 
 func NewActionID(p []byte) ActionID { return ActionID(SumID(p)) }
 
+const (
+	DefaultTrimInterval = 5 * time.Minute
+	DefaultTrimLimit    = 24 * time.Hour
+	DefaultTrimSize     = 100 << 20
+)
+
 // A Cache is a package cache, backed by a file system directory tree.
 type Cache struct {
 	lastTrim time.Time
@@ -42,6 +48,39 @@ type Cache struct {
 	trimInterval, trimLimit time.Duration
 
 	mu sync.Mutex
+}
+type cacheOption func(*Cache)
+
+func WithNow(f func() time.Time) cacheOption {
+	return func(C *Cache) {
+		if f != nil {
+			C.now = f
+		}
+	}
+}
+func WithTrimSize(n int64) cacheOption {
+	return func(C *Cache) {
+		if n < 0 {
+			n = DefaultTrimSize
+		}
+		C.trimSize = n
+	}
+}
+func WithTrimInterval(d time.Duration) cacheOption {
+	return func(C *Cache) {
+		if d < 0 {
+			d = DefaultTrimInterval
+		}
+		C.trimInterval = d
+	}
+}
+func WithTrimLimit(d time.Duration) cacheOption {
+	return func(C *Cache) {
+		if d < 0 {
+			d = DefaultTrimLimit
+		}
+		C.trimLimit = d
+	}
 }
 
 // Open opens and returns the cache in the given directory.
@@ -55,12 +94,20 @@ type Cache struct {
 // to share a cache directory (for example, if the directory were stored
 // in a network file system). File locking is notoriously unreliable in
 // network file systems and may not suffice to protect the cache.
-func Open(dir string) (*Cache, error) {
+func Open(dir string, options ...cacheOption) (*Cache, error) {
 	c, err := cache.Open(dir)
 	if err != nil {
 		return nil, err
 	}
-	return &Cache{c: c, now: time.Now, dir: dir, trimInterval: 5 * time.Minute, trimLimit: 24 * time.Hour}, nil
+	C := &Cache{c: c, now: time.Now, dir: dir,
+		trimInterval: DefaultTrimInterval,
+		trimLimit:    DefaultTrimLimit,
+		trimSize:     DefaultTrimSize,
+	}
+	for _, o := range options {
+		o(C)
+	}
+	return C, nil
 }
 
 // Put stores the given output in the cache as the output for the action ID.
@@ -99,27 +146,6 @@ func (C *Cache) GetFile(id ActionID) (file string, entry cache.Entry, err error)
 	return C.c.GetFile(id)
 }
 
-// SetTrimInterval set the time intervals between Trims (on Put).
-func (C *Cache) SetTrimInterval(d time.Duration) {
-	C.mu.Lock()
-	C.trimInterval = d
-	C.mu.Unlock()
-}
-
-// SetTrimLimit set the max age of entries.
-func (C *Cache) SetTrimLimit(d time.Duration) {
-	C.mu.Lock()
-	C.trimInterval = d
-	C.mu.Unlock()
-}
-
-// SetTrimSize set the trim file size (checked on Put).
-func (C *Cache) SetTrimSize(n int64) {
-	C.mu.Lock()
-	C.trimSize = n
-	C.mu.Unlock()
-}
-
 // Trim removes old cache entries that are likely not to be reused.
 func (C *Cache) Trim() error {
 	C.mu.Lock()
@@ -130,9 +156,11 @@ func (C *Cache) Trim() error {
 func (C *Cache) trim() error {
 	now := C.now()
 	if !C.lastTrim.IsZero() && now.Sub(C.lastTrim) < C.trimInterval {
+		slog.Debug("skip trim", slog.Time("lastTrim", C.lastTrim), slog.String("trimInterval", C.trimInterval.String()))
 		return nil
 	}
 
+	trimFn := filepath.Join(C.dir, "trim.txt")
 	// We maintain in dir/trim.txt the time of the last completed cache trim.
 	// If the cache has been trimmed recently enough, do nothing.
 	// This is the common case.
@@ -140,12 +168,12 @@ func (C *Cache) trim() error {
 	// trim time is too far in the future, attempt the trim anyway. It's possible that
 	// the cache was full when the corruption happened. Attempting a trim on
 	// an empty cache is cheap, so there wouldn't be a big performance hit in that case.
-	log.Println("trimInterval:", C.trimInterval)
 	if C.trimInterval > 0 {
-		if data, err := lockedfile.Read(filepath.Join(C.dir, "trim.txt")); err == nil {
-			if t, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64); err == nil {
+		if data, err := lockedfile.Read(trimFn); err == nil {
+			if t, err := strconv.ParseInt(string(bytes.TrimSpace(data)), 10, 64); err == nil {
 				C.lastTrim = time.Unix(t, 0)
-				if d := now.Sub(C.lastTrim); d < C.trimInterval {
+				if now.Sub(C.lastTrim) < C.trimInterval {
+					slog.Debug("skip trim", slog.Time("lastTrim", C.lastTrim), slog.String("trimInterval", C.trimInterval.String()))
 					return nil
 				}
 			}
@@ -153,8 +181,6 @@ func (C *Cache) trim() error {
 	}
 
 	// Trim each of the 256 subdirectories.
-	// We subtract an additional mtimeInterval
-	// to account for the imprecision of our "last used" mtimes.
 	cutoffTime := now.Add(-C.trimLimit)
 	cutoffSize := C.trimSize
 	sizeCutoffTime := now.Add(-C.trimInterval)
@@ -168,7 +194,8 @@ func (C *Cache) trim() error {
 	// cache will appear older than it is, and we'll trim it again next time.
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "%d", now.Unix())
-	if err := lockedfile.Write(filepath.Join(C.dir, "trim.txt"), &b, 0666); err != nil {
+	if err := lockedfile.Write(trimFn, &b, 0666); err != nil {
+		slog.Error("write", slog.String("file", trimFn), slog.Any("error", err))
 		return err
 	}
 
@@ -189,7 +216,7 @@ func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64
 	names, _ := f.Readdirnames(-1)
 	f.Close()
 
-	for _, name := range names {
+	for i, name := range names {
 		// Remove only cache entries (xxxx-a and xxxx-d).
 		if !strings.HasSuffix(name, "-a") && !strings.HasSuffix(name, "-d") {
 			continue
@@ -199,9 +226,14 @@ func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64
 		if err != nil {
 			continue
 		}
+		if i == 0 {
+			slog.Debug("start trim", slog.String("dir", subdir), slog.Time("cutoffTime", cutoffTime), slog.Int64("cutoffSize:", cutoffSize), slog.Time("sizeCutoffTime:", sizeCutoffTime))
+		}
 		if info.ModTime().Before(cutoffTime) ||
 			(cutoffSize > 0 && info.Size() > cutoffSize && info.ModTime().Before(sizeCutoffTime)) {
 			os.Remove(entry)
+		} else {
+			slog.Debug("trim keep", slog.String("file", info.Name()), slog.Time("mtime:", info.ModTime()), slog.Int64("size:", info.Size()))
 		}
 	}
 }

@@ -349,18 +349,18 @@ func Main() error {
 
 	// nosemgrep: go.lang.correctness.permissions.file_permission.incorrect-default-permission
 	_ = os.MkdirAll(*flagCacheDir, 0750)
-	cache, err = filecache.Open(*flagCacheDir)
+	cache, err = filecache.Open(*flagCacheDir,
+		filecache.WithTrimInterval(*flagTrimInterval),
+		filecache.WithTrimLimit(*flagTrimLimit),
+		filecache.WithTrimSize(*flagTrimSize),
+	)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", *flagCacheDir, err)
 	}
-	if *flagTrimInterval > 0 {
-		cache.SetTrimInterval(*flagTrimInterval)
-	}
 	if *flagTrim {
-		cache.SetTrimLimit(*flagTrimLimit)
-	}
-	if *flagTrimSize > 0 {
-		cache.SetTrimSize(*flagTrimSize)
+		if err := cache.Trim(); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

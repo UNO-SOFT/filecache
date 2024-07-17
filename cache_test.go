@@ -21,13 +21,10 @@ func TestPutTrim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	c, err := Open(dir)
+	c, err := Open(dir, WithTrimInterval(15*time.Minute), WithTrimLimit(24*time.Hour), WithTrimSize(1<<20))
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.SetTrimInterval(15 * time.Minute)
-	c.SetTrimLimit(24 * time.Hour)
-	c.SetTrimSize(1 << 20)
 
 	putGet := func(i int) (ActionID, string, OutputID) {
 		id := NewActionID([]byte(fmt.Sprintf("%018d", i)))
