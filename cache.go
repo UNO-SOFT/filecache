@@ -32,6 +32,7 @@ type OutputID = cache.OutputID
 func NewActionID(p []byte) ActionID { return ActionID(SumID(p)) }
 
 const (
+	DefaultMaxSize      = 0
 	DefaultTrimInterval = 5 * time.Minute
 	DefaultTrimLimit    = 24 * time.Hour
 	DefaultTrimSize     = 100 << 20
@@ -44,13 +45,21 @@ type Cache struct {
 	now      func() time.Time
 
 	dir                     string
-	trimSize                int64
+	trimSize, maxSize       int64
 	trimInterval, trimLimit time.Duration
 
 	mu sync.Mutex
 }
 type cacheOption func(*Cache)
 
+func WithMaxSize(n int64) cacheOption {
+	return func(C *Cache) {
+		if n < 0 {
+			n = DefaultMaxSize
+		}
+		C.maxSize = n
+	}
+}
 func WithNow(f func() time.Time) cacheOption {
 	return func(C *Cache) {
 		if f != nil {
@@ -100,6 +109,7 @@ func Open(dir string, options ...cacheOption) (*Cache, error) {
 		return nil, err
 	}
 	C := &Cache{c: c, now: time.Now, dir: dir,
+		maxSize:      DefaultMaxSize,
 		trimInterval: DefaultTrimInterval,
 		trimLimit:    DefaultTrimLimit,
 		trimSize:     DefaultTrimSize,
@@ -184,9 +194,27 @@ func (C *Cache) trim() error {
 	cutoffTime := now.Add(-C.trimLimit)
 	cutoffSize := C.trimSize
 	sizeCutoffTime := now.Add(-C.trimInterval)
+	var size int64
 	for i := 0; i < 256; i++ {
 		subdir := filepath.Join(C.dir, fmt.Sprintf("%02x", i))
-		C.trimSubdir(subdir, cutoffTime, cutoffSize, sizeCutoffTime)
+		size += C.trimSubdir(subdir, cutoffTime, cutoffSize, sizeCutoffTime)
+	}
+	slog.Warn("trim", "size", size, "maxSize", C.maxSize)
+	if C.maxSize > 0 && size > C.maxSize {
+		slog.Warn("truncate cache", "maxSize", C.maxSize, "size", size)
+		for i := 0; i < 256; i++ {
+			subdir := filepath.Join(C.dir, fmt.Sprintf("%02x", i))
+			dis, _ := os.ReadDir(subdir)
+			for _, di := range dis {
+				// Remove only cache entries (xxxx-a and xxxx-d).
+				if name := di.Name(); len(name) > 2 {
+					switch name[len(name)-2:] {
+					case "-a", "-d":
+						os.Remove(filepath.Join(subdir, di.Name()))
+					}
+				}
+			}
+		}
 	}
 	C.lastTrim = now
 
@@ -203,7 +231,7 @@ func (C *Cache) trim() error {
 }
 
 // trimSubdir trims a single cache subdirectory.
-func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64, sizeCutoffTime time.Time) {
+func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64, sizeCutoffTime time.Time) int64 {
 	// Read all directory entries from subdir before removing
 	// any files, in case removing files invalidates the file offset
 	// in the directory scan. Also, ignore error from f.Readdirnames,
@@ -211,29 +239,41 @@ func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64
 	// want to process any entries found before the error.
 	f, err := os.Open(subdir)
 	if err != nil {
-		return
+		if !os.IsNotExist(err) {
+			slog.Warn("Open", "subdir", subdir)
+		}
+		return 0
 	}
-	names, _ := f.Readdirnames(-1)
-	f.Close()
+	defer f.Close()
+	var size int64
+	for {
+		dis, _ := f.ReadDir(128)
+		if len(dis) == 0 {
+			break
+		}
 
-	for i, name := range names {
-		// Remove only cache entries (xxxx-a and xxxx-d).
-		if !strings.HasSuffix(name, "-a") && !strings.HasSuffix(name, "-d") {
-			continue
-		}
-		entry := filepath.Join(subdir, name)
-		info, err := os.Stat(entry)
-		if err != nil {
-			continue
-		}
-		if i == 0 {
-			slog.Debug("start trim", slog.String("dir", subdir), slog.Time("cutoffTime", cutoffTime), slog.Int64("cutoffSize:", cutoffSize), slog.Time("sizeCutoffTime:", sizeCutoffTime))
-		}
-		if info.ModTime().Before(cutoffTime) ||
-			(cutoffSize > 0 && info.Size() > cutoffSize && info.ModTime().Before(sizeCutoffTime)) {
-			os.Remove(entry)
-		} else {
-			slog.Debug("trim keep", slog.String("file", info.Name()), slog.Time("mtime:", info.ModTime()), slog.Int64("size:", info.Size()))
+		for _, di := range dis {
+			slog.Info("list", "entry", di.Name())
+			name := di.Name()
+			// Remove only cache entries (xxxx-a and xxxx-d).
+			if !strings.HasSuffix(name, "-a") && !strings.HasSuffix(name, "-d") {
+				continue
+			}
+			entry := filepath.Join(subdir, name)
+			info, err := os.Stat(entry)
+			if err != nil {
+				slog.Warn("stat", "entry", entry, "error", err)
+				continue
+			}
+			if info.ModTime().Before(cutoffTime) ||
+				(cutoffSize > 0 && info.Size() > cutoffSize && info.ModTime().Before(sizeCutoffTime)) {
+				// slog.Info("remove", "entry", entry)
+				os.Remove(entry)
+			} else {
+				slog.Info("keep", "entry", entry, "size", size, "info", info.Size())
+				size += info.Size()
+			}
 		}
 	}
+	return size
 }
