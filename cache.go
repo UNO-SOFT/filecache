@@ -47,6 +47,7 @@ type Cache struct {
 	dir                     string
 	trimSize, maxSize       int64
 	trimInterval, trimLimit time.Duration
+	logger                  *slog.Logger
 
 	mu sync.Mutex
 }
@@ -92,6 +93,15 @@ func WithTrimLimit(d time.Duration) cacheOption {
 	}
 }
 
+// WithLogger sets the logger to the given Logger - iff it is not nil.
+func WithLogger(lgr *slog.Logger) cacheOption {
+	return func(C *Cache) {
+		if lgr != nil {
+			C.logger = lgr
+		}
+	}
+}
+
 // Open opens and returns the cache in the given directory.
 //
 // It is safe for multiple processes on a single machine to use the
@@ -113,6 +123,7 @@ func Open(dir string, options ...cacheOption) (*Cache, error) {
 		trimInterval: DefaultTrimInterval,
 		trimLimit:    DefaultTrimLimit,
 		trimSize:     DefaultTrimSize,
+		logger:       slog.Default().With("lib", "filecache"),
 	}
 	for _, o := range options {
 		o(C)
@@ -166,7 +177,7 @@ func (C *Cache) Trim() error {
 func (C *Cache) trim() error {
 	now := C.now()
 	if !C.lastTrim.IsZero() && now.Sub(C.lastTrim) < C.trimInterval {
-		slog.Debug("skip trim", slog.Time("lastTrim", C.lastTrim), slog.String("trimInterval", C.trimInterval.String()))
+		C.logger.Debug("skip trim", slog.Time("lastTrim", C.lastTrim), slog.String("trimInterval", C.trimInterval.String()))
 		return nil
 	}
 
@@ -183,7 +194,7 @@ func (C *Cache) trim() error {
 			if t, err := strconv.ParseInt(string(bytes.TrimSpace(data)), 10, 64); err == nil {
 				C.lastTrim = time.Unix(t, 0)
 				if now.Sub(C.lastTrim) < C.trimInterval {
-					slog.Debug("skip trim", slog.Time("lastTrim", C.lastTrim), slog.String("trimInterval", C.trimInterval.String()))
+					C.logger.Debug("skip trim", slog.Time("lastTrim", C.lastTrim), slog.String("trimInterval", C.trimInterval.String()))
 					return nil
 				}
 			}
@@ -199,9 +210,9 @@ func (C *Cache) trim() error {
 		subdir := filepath.Join(C.dir, fmt.Sprintf("%02x", i))
 		size += C.trimSubdir(subdir, cutoffTime, cutoffSize, sizeCutoffTime)
 	}
-	slog.Warn("trim", "size", size, "maxSize", C.maxSize)
+	C.logger.Warn("trim", "size", size, "maxSize", C.maxSize)
 	if C.maxSize > 0 && size > C.maxSize {
-		slog.Warn("truncate cache", "maxSize", C.maxSize, "size", size)
+		C.logger.Warn("truncate cache", "maxSize", C.maxSize, "size", size)
 		for i := 0; i < 256; i++ {
 			subdir := filepath.Join(C.dir, fmt.Sprintf("%02x", i))
 			dis, _ := os.ReadDir(subdir)
@@ -223,7 +234,7 @@ func (C *Cache) trim() error {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "%d", now.Unix())
 	if err := lockedfile.Write(trimFn, &b, 0666); err != nil {
-		slog.Error("write", slog.String("file", trimFn), slog.Any("error", err))
+		C.logger.Error("write", slog.String("file", trimFn), slog.Any("error", err))
 		return err
 	}
 
@@ -240,7 +251,7 @@ func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64
 	f, err := os.Open(subdir)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Warn("Open", "subdir", subdir)
+			C.logger.Warn("Open", "subdir", subdir)
 		}
 		return 0
 	}
@@ -253,7 +264,7 @@ func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64
 		}
 
 		for _, di := range dis {
-			slog.Info("list", "entry", di.Name())
+			// C.logger.Info("list", "entry", di.Name())
 			name := di.Name()
 			// Remove only cache entries (xxxx-a and xxxx-d).
 			if !strings.HasSuffix(name, "-a") && !strings.HasSuffix(name, "-d") {
@@ -262,15 +273,15 @@ func (C *Cache) trimSubdir(subdir string, cutoffTime time.Time, cutoffSize int64
 			entry := filepath.Join(subdir, name)
 			info, err := os.Stat(entry)
 			if err != nil {
-				slog.Warn("stat", "entry", entry, "error", err)
+				C.logger.Warn("stat", "entry", entry, "error", err)
 				continue
 			}
 			if info.ModTime().Before(cutoffTime) ||
 				(cutoffSize > 0 && info.Size() > cutoffSize && info.ModTime().Before(sizeCutoffTime)) {
-				// slog.Info("remove", "entry", entry)
+				// C.logger.Info("remove", "entry", entry)
 				os.Remove(entry)
 			} else {
-				slog.Info("keep", "entry", entry, "size", size, "info", info.Size())
+				// C.logger.Info("keep", "entry", entry, "size", size, "info", info.Size())
 				size += info.Size()
 			}
 		}
