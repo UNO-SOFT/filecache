@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -99,20 +100,27 @@ func Main() error {
 					fh, err := os.Open(fn)
 					if err != nil {
 						logger.Error("open", "file", fn, "error", err)
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+						code := http.StatusInternalServerError
+						if errors.Is(err, fs.ErrNotExist) {
+							code = http.StatusNotFound
+						}
+						http.Error(w, err.Error(), code)
 						return
 					}
 					defer fh.Close()
-					length, seekEndErr := fh.Seek(0, io.SeekEnd)
-					if _, err = fh.Seek(0, 0); err != nil {
-						logger.Error("rewind", fh.Name(), "error", err)
-						http.Error(w, err.Error(), http.StatusInternalServerError)
+					fi, err := fh.Stat()
+					if err != nil {
+						logger.Error("stat", "file", fh.Name(), "error", err)
+						http.Error(w, err.Error(), http.StatusNotFound)
+						return
+					}
+					logger.Info("serve", "file", fn, "length", fi.Size())
+					if fi.Size() == 0 {
+						http.Error(w, "zero sized file", http.StatusNotFound)
 						return
 					}
 					w.Header().Set("Content-Type", "application/octet-stream")
-					if seekEndErr == nil {
-						w.Header().Set("Content-Length", fmt.Sprintf("%d", length))
-					}
+					w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
 					_, err = io.Copy(w, fh)
 					if err != nil {
 						logger.Error("serving from cached", "file", fh.Name(), "error", err)
@@ -132,17 +140,26 @@ func Main() error {
 					}()
 					_ = os.Remove(fh.Name())
 					logger.Info("store", "actionID", actionIDb64)
-					if _, err = io.Copy(fh, r.Body); err != nil {
+					var n int64
+					if n, err = io.Copy(fh, r.Body); err != nil {
 						logger.Error("write file", "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					} else if n == 0 {
+						logger.Error("zero-sized file")
+						http.Error(w, "zero-sized file", http.StatusPreconditionFailed)
 						return
 					}
 
 					_, _ = fh.Seek(0, 0)
 					logger.Info("put", "file", fh.Name())
-					if _, _, err = cache.Put(actionID, fh); err != nil {
+					if _, n, err = cache.Put(actionID, fh); err != nil {
 						logger.Error("Put", "error", err)
 						http.Error(w, err.Error(), http.StatusInternalServerError)
+						return
+					} else if n == 0 {
+						logger.Error("Put", "length", n)
+						http.Error(w, "zero length", http.StatusInternalServerError)
 						return
 					}
 					w.WriteHeader(201)
@@ -208,24 +225,24 @@ func Main() error {
 			}
 
 			var outFh *renameio.PendingFile
+			destW := io.Writer(os.Stdout)
 			if *flagStdout != "" && *flagStdout != "-" {
 				if outFh, err = renameio.NewPendingFile(*flagStdout, renameio.WithPermissions(0644)); err != nil {
 					return err
 				}
 				defer outFh.Cleanup()
+				destW = outFh
 			}
 
 			actionID := filecache.NewActionID(cmdBuf.Bytes())
-			fn, _, err := cache.GetFile(actionID)
-			logger.Debug("action", "id", actionID, "fn", fn, "error", err)
-			if fn != "" && err == nil {
-				fh, err := os.Open(fn)
+			cacheFn, _, err := cache.GetFile(actionID)
+			logger.Debug("action", "id", actionID, "fn", cacheFn, "error", err)
+			if cacheFn != "" && err == nil {
+				fh, err := os.Open(cacheFn)
 				if err != nil {
-					logger.Error("open", "file", fn, "error", err)
+					logger.Error("open", "file", cacheFn, "error", err)
 				} else {
-					if outFh == nil {
-						_, err = io.Copy(os.Stdout, fh)
-					} else if _, err = io.Copy(outFh, fh); err == nil {
+					if _, err = io.Copy(destW, fh); err == nil && outFh != nil {
 						err = outFh.CloseAtomicallyReplace()
 					}
 					if err != nil {
@@ -271,13 +288,20 @@ func Main() error {
 					}
 				} else {
 					logger.Debug("server found", "url", req.URL.String())
-					if outFh == nil {
-						_, err = io.Copy(os.Stdout, resp.Body)
-					} else if _, err = io.Copy(outFh, resp.Body); err == nil {
+					if _, err = io.Copy(destW, resp.Body); err == nil && outFh != nil {
 						err = outFh.CloseAtomicallyReplace()
 					}
 					_ = resp.Body.Close()
 					return err
+				}
+			}
+
+			var cacheFh *renameio.PendingFile
+			if cacheFn != "" {
+				if cacheFh, err = renameio.NewPendingFile(cacheFn); err != nil {
+					logger.Error("create cache", "file", cacheFn, "error", err)
+				} else {
+					defer cacheFh.Cleanup()
 				}
 			}
 
@@ -296,10 +320,12 @@ func Main() error {
 				cmd.Stdin = stdin
 			}
 			cmd.Stderr = os.Stderr
-			if outFh == nil {
-				cmd.Stdout = fh
-			} else {
-				cmd.Stdout = io.MultiWriter(fh, outFh)
+			cmd.Stdout = io.MultiWriter(fh, destW)
+			if outFh != nil {
+				cmd.Stdout = io.MultiWriter(cmd.Stdout, outFh)
+			}
+			if cacheFh != nil {
+				cmd.Stdout = io.MultiWriter(cmd.Stdout, cacheFh)
 			}
 			if err = cmd.Run(); err != nil {
 				logger.Error("executing", "args", args, "error", err)
@@ -311,31 +337,45 @@ func Main() error {
 					return err
 				}
 			}
+			if cacheFh != nil {
+				if err = cacheFh.CloseAtomicallyReplace(); err != nil {
+					return err
+				}
+				return nil
+			}
+			if *flagServer == "" {
+				return nil
+			}
+
+			if fi, err := fh.Stat(); err != nil {
+				return err
+			} else if fi.Size() == 0 {
+				logger.Warn("zero-sized", "file", fh.Name())
+				return nil
+			}
 			if _, err = fh.Seek(0, 0); err != nil {
 				return fmt.Errorf("rewind %q: %w", fh.Name(), err)
 			}
 
 			// Try to put to the server
-			if *flagServer != "" {
-				logger.Debug("POST", "server", *flagServer, "actionID", actionIDb64)
-				if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
-					logger.Error("create POST request", "to", *flagServer, "error", err)
-				} else if resp, err := client.Do(req); err != nil {
-					logger.Error("POST request", "url", req.URL.String(), "server", *flagServer, "error", err)
+			logger.Debug("POST", "server", *flagServer, "actionID", actionIDb64)
+			if req, err := http.NewRequestWithContext(ctx, "POST", *flagServer+"/"+actionIDb64, fh); err != nil {
+				logger.Error("create POST request", "to", *flagServer, "error", err)
+			} else if resp, err := client.Do(req); err != nil {
+				logger.Error("POST request", "url", req.URL.String(), "server", *flagServer, "error", err)
+			} else {
+				if resp.Body != nil {
+					defer resp.Body.Close()
+				}
+				logger.Debug("put cache", "status", resp.Status, "actionID", actionIDb64)
+				if resp.StatusCode >= 300 {
+					logger.Error("POST request", "url", req.URL.String(), "error", resp.Status)
 				} else {
-					if resp.Body != nil {
-						defer resp.Body.Close()
-					}
-					logger.Debug("put cache", "status", resp.Status, "actionID", actionIDb64)
-					if resp.StatusCode >= 300 {
-						logger.Error("POST request", "url", req.URL.String(), "error", resp.Status)
-					} else {
-						return nil
-					}
+					return nil
 				}
-				if _, err = fh.Seek(0, 0); err != nil {
-					return fmt.Errorf("rewind after put %q: %w", fh.Name(), err)
-				}
+			}
+			if _, err = fh.Seek(0, 0); err != nil {
+				return fmt.Errorf("rewind after put %q: %w", fh.Name(), err)
 			}
 
 			_, _, err = cache.Put(actionID, fh)
