@@ -218,6 +218,12 @@ func (C *Cache) trim() error {
 			dis, _ := os.ReadDir(subdir)
 			for _, di := range dis {
 				// Remove only cache entries (xxxx-a and xxxx-d).
+				if fi, err := di.Info(); err == nil {
+					size -= fi.Size()
+					if size <= C.maxSize/2 {
+						break
+					}
+				}
 				if name := di.Name(); len(name) > 2 {
 					switch name[len(name)-2:] {
 					case "-a", "-d":
