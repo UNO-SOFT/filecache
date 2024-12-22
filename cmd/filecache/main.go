@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -27,8 +26,10 @@ import (
 	"github.com/UNO-SOFT/filecache"
 	"github.com/UNO-SOFT/zlog/v2"
 	"github.com/google/renameio/v2"
-	"github.com/peterbourgon/ff/v3/ffcli"
+	"github.com/peterbourgon/ff/v4"
+	"github.com/peterbourgon/ff/v4/ffhelp"
 	"github.com/tgulacsi/go/httpunix"
+	"github.com/tgulacsi/go/version"
 )
 
 var verbose zlog.VerboseVar
@@ -44,7 +45,7 @@ func main() {
 func Main() error {
 	var cache *filecache.Cache
 
-	serveCmd := ffcli.Command{Name: "serve",
+	serveCmd := ff.Command{Name: "serve",
 		Exec: func(ctx context.Context, args []string) error {
 			var verboseLevelSet bool
 			for _, a := range os.Args[1:] {
@@ -171,24 +172,25 @@ func Main() error {
 		},
 	}
 
-	fs := flag.NewFlagSet("filecache", flag.ContinueOnError)
-	flagCacheDir := fs.String("cache-dir", "", "cache directory")
+	FS := ff.NewFlagSet("filecache")
+	flagCacheDir := FS.String('d', "cache-dir", "", "cache directory")
 	var err error
 	if *flagCacheDir, err = os.UserCacheDir(); err == nil {
 		*flagCacheDir = filepath.Join(*flagCacheDir, "filecache")
 	}
-	flagStdin := fs.Bool("stdin", false, "read and pass stdin")
-	flagTrim := fs.Bool("trim", false, "trim before run")
-	flagTrimInterval := fs.Duration("trim-interval", 1*time.Hour, "trim interval")
-	flagTrimLimit := fs.Duration("trim-limit", 5*24*time.Hour, "trim limit")
-	flagTrimSize := fs.Int64("trim-size", 1<<30, "trim file size limit")
-	fs.Var(&verbose, "v", "verbose logging")
-	flagServer := fs.String("server", "", "server to connect to")
-	flagStdout := fs.String("o", "", "output to this file")
+	flagStdin := FS.Bool('S', "stdin", "read and pass stdin")
+	flagTrim := FS.Bool('T', "trim", "trim before run")
+	flagTrimInterval := FS.DurationLong("trim-interval", 1*time.Hour, "trim interval")
+	flagTrimLimit := FS.DurationLong("trim-limit", 5*24*time.Hour, "trim limit")
+	flagTrimSize := FS.Uint64Long("trim-size", 1<<30, "trim file size limit")
+	FS.Value('v', "verbose", &verbose, "verbose logging")
+	flagServer := FS.StringLong("server", "", "server to connect to")
+	flagStdout := FS.String('o', "out", "", "output to this file")
+	flagVersion := FS.BoolLong("version", "print version")
 
-	app := ffcli.Command{Name: "cmd", FlagSet: fs,
-		ShortUsage:  "command to execute",
-		Subcommands: []*ffcli.Command{&serveCmd},
+	app := ff.Command{Name: "cmd", Flags: FS,
+		Usage:       "command to execute",
+		Subcommands: []*ff.Command{&serveCmd},
 		Exec: func(ctx context.Context, args []string) error {
 			var cmdBuf bytes.Buffer
 			// Number of arguments, \0
@@ -383,7 +385,15 @@ func Main() error {
 		},
 	}
 	if err := app.Parse(os.Args[1:]); err != nil {
+		ffhelp.Command(&app).WriteTo(os.Stderr)
+		if errors.Is(err, ff.ErrHelp) {
+			return nil
+		}
 		return err
+	}
+	if *flagVersion {
+		fmt.Println(version.Main())
+		return nil
 	}
 	logger.Debug("parsed", "args", os.Args[1:])
 
@@ -392,7 +402,7 @@ func Main() error {
 	cache, err = filecache.Open(*flagCacheDir,
 		filecache.WithTrimInterval(*flagTrimInterval),
 		filecache.WithTrimLimit(*flagTrimLimit),
-		filecache.WithTrimSize(*flagTrimSize),
+		filecache.WithTrimSize(int64(*flagTrimSize)),
 	)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", *flagCacheDir, err)
