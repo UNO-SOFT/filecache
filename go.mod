@@ -7,7 +7,7 @@ toolchain go1.23.0
 require (
 	github.com/UNO-SOFT/zlog v0.8.3
 	github.com/google/renameio/v2 v2.0.0
-	github.com/peterbourgon/ff/v4 v4.0.0-alpha.4
+	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/rogpeppe/go-internal v1.13.1
 	github.com/tgulacsi/go v0.27.7-0.20241126105246-43f36a11adc5
 )
@@ -21,3 +21,5 @@ require (
 )
 
 //replace github.com/UNO-SOFT/zlog => ../zlog
+
+replace github.com/peterbourgon/ff/v4 v4.0.0-beta.1 => github.com/UNO-SOFT/ff/v4 v4.0.0-beta.1.us
