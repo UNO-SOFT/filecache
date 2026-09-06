@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 //
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: EUPL-1.2
 
 package filecache_test
 
