@@ -26,8 +26,9 @@ import (
 	"github.com/UNO-SOFT/filecache"
 	"github.com/UNO-SOFT/zlog/v2"
 	"github.com/google/renameio/v2"
-	"github.com/peterbourgon/ff/v4"
-	"github.com/peterbourgon/ff/v4/ffhelp"
+
+	"flag"
+	"github.com/UNO-SOFT/cli"
 	"github.com/tgulacsi/go/httpunix"
 	"github.com/tgulacsi/go/version"
 )
@@ -45,8 +46,9 @@ func main() {
 func Main() error {
 	var cache *filecache.Cache
 
-	serveCmd := ff.Command{Name: "serve",
-		Exec: func(ctx context.Context, args []string) error {
+	serveCmd := cli.Command{Name: "serve",
+		Exec: func(ctx context.Context, state *cli.State) error {
+			args := state.Args
 			var verboseLevelSet bool
 			for _, a := range os.Args[1:] {
 				if a == "-v" || strings.HasPrefix(a, "-v=") {
@@ -172,26 +174,27 @@ func Main() error {
 		},
 	}
 
-	FS := ff.NewFlagSet("filecache")
-	flagCacheDir := FS.String('d', "cache-dir", "", "cache directory")
+	FS := flag.NewFlagSet("filecache", flag.ContinueOnError)
+	flagCacheDir := FS.String("cache-dir", "", "cache directory")
 	var err error
 	if *flagCacheDir, err = os.UserCacheDir(); err == nil {
 		*flagCacheDir = filepath.Join(*flagCacheDir, "filecache")
 	}
-	flagStdin := FS.Bool('S', "stdin", "read and pass stdin")
-	flagTrim := FS.Bool('T', "trim", "trim before run")
-	flagTrimInterval := FS.DurationLong("trim-interval", 1*time.Hour, "trim interval")
-	flagTrimLimit := FS.DurationLong("trim-limit", 5*24*time.Hour, "trim limit")
-	flagTrimSize := FS.Uint64Long("trim-size", 1<<30, "trim file size limit")
-	FS.Value('v', "verbose", &verbose, "verbose logging")
-	flagServer := FS.StringLong("server", "", "server to connect to")
-	flagStdout := FS.String('o', "out", "", "output to this file")
-	flagVersion := FS.BoolLong("version", "print version")
+	flagStdin := FS.Bool("stdin", false, "read and pass stdin")
+	flagTrim := FS.Bool("trim", false, "trim before run")
+	flagTrimInterval := FS.Duration("trim-interval", 1*time.Hour, "trim interval")
+	flagTrimLimit := FS.Duration("trim-limit", 5*24*time.Hour, "trim limit")
+	flagTrimSize := FS.Uint64("trim-size", 1<<30, "trim file size limit")
+	FS.Var(&verbose, "verbose", "verbose logging")
+	flagServer := FS.String("server", "", "server to connect to")
+	flagStdout := FS.String("out", "", "output to this file")
+	flagVersion := FS.Bool("version", false, "print version")
 
-	app := ff.Command{Name: "cmd", Flags: FS,
+	app := cli.Command{Name: "cmd", Flags: FS,
 		Usage:       "command to execute",
-		Subcommands: []*ff.Command{&serveCmd},
-		Exec: func(ctx context.Context, args []string) error {
+		SubCommands: []*cli.Command{&serveCmd},
+		Exec: func(ctx context.Context, state *cli.State) error {
+			args := state.Args
 			var cmdBuf bytes.Buffer
 			// Number of arguments, \0
 			// arguments, separated by \0
@@ -382,11 +385,11 @@ func Main() error {
 
 			_, _, err = cache.Put(actionID, fh)
 			return err
-		},
+		}, FlagConfigs: []cli.FlagConfig{cli.FlagConfig{Name: "cache-dir", Short: "d"}, cli.FlagConfig{Name: "stdin", Short: "S"}, cli.FlagConfig{Name: "trim", Short: "T"}, cli.FlagConfig{Name: "verbose", Short: "v"}, cli.FlagConfig{Name: "out", Short: "o"}},
 	}
-	if err := app.Parse(os.Args[1:]); err != nil {
-		ffhelp.Command(&app).WriteTo(os.Stderr)
-		if errors.Is(err, ff.ErrHelp) {
+	if err := cli.Parse(&app, os.Args[1:]); err != nil {
+		cli.PrintHelp(os.Stderr, &app)
+		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
@@ -415,7 +418,7 @@ func Main() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	return app.Run(ctx)
+	return cli.Run(ctx, &app, nil)
 }
 func prepareAddr(addr string) string {
 	if strings.HasPrefix(addr, "/") {

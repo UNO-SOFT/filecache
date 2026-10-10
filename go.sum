@@ -1,3 +1,5 @@
+github.com/UNO-SOFT/cli v0.0.0-20261009074406-95b18dbd4953 h1:GNwMZjLf2dkctxgxQ24GKER/ICiDm1JRkyPuzGgEEmU=
+github.com/UNO-SOFT/cli v0.0.0-20261009074406-95b18dbd4953/go.mod h1:QD9ZBLRNpayv97OHM5HB1pyav5L/xa30E6BovwMNpBc=
 github.com/UNO-SOFT/ff/v4 v4.0.0-beta.1.us h1:9ae1G6L/Pgk1k0SpI8MZcYqKe+dTgpQ+R5sWKGqQVDI=
 github.com/UNO-SOFT/ff/v4 v4.0.0-beta.1.us/go.mod h1:onQJUKipvCyFmZ1rIYwFAh1BhPOvftb1uhvSI7krNLc=
 github.com/UNO-SOFT/zlog v0.8.3 h1:tdLY0pJK/dy5IEqNFNdbz50s7GLkD8fgdM0qBt6YG60=
@@ -18,6 +20,8 @@ github.com/pelletier/go-toml/v2 v2.0.9 h1:uH2qQXheeefCCkuBBSLi7jCiSmj3VRh2+Goq2N
 github.com/pelletier/go-toml/v2 v2.0.9/go.mod h1:tJU2Z3ZkXwnxa4DPO899bsyIoywizdUvyaeZurnPPDc=
 github.com/rogpeppe/go-internal v1.13.1 h1:KvO1DLK/DRN07sQ1LQKScxyZJuNnedQ5/wKSR38lUII=
 github.com/rogpeppe/go-internal v1.13.1/go.mod h1:uMEvuHeurkdAXX61udpOXGD/AzZDWNMNyH2VO9fmH0o=
+github.com/rogpeppe/go-internal v1.16.0 h1:O9DK+vNMDVGLr2BeZqmpLeMjiMNkuXfcqntWbZV6S5g=
+github.com/rogpeppe/go-internal v1.16.0/go.mod h1:DrUVZyrJU+txYW5/1kwtXQSMFio52ZOxX7yM1VHvnxs=
 github.com/rs/zerolog v1.31.0 h1:FcTR3NnLWW+NnTwwhFWiJSZr4ECLpqCm6QsEnyvbV4A=
 github.com/rs/zerolog v1.31.0/go.mod h1:/7mN4D5sKwJLZQ2b/znpjC3/GQWY/xaDXUM0kKWRHss=
 github.com/tgulacsi/go v0.27.7-0.20241126105246-43f36a11adc5 h1:utUATuY89ZXbiGbF8lvRJbgV8LTMztOC68b8fHY2idA=
